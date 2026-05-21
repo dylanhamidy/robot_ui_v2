@@ -214,7 +214,7 @@ static bool execStep(const json& step) {
             t = (tt != step.end()) ? tt->get<float>() : g_default_time;
         }
         g_robot.movel(pos, vel2, acc2, t, MOVE_MODE_ABSOLUTE,
-                      COORDINATE_SYSTEM_BASE, 0.0f,
+                      MOVE_REFERENCE_BASE, 0.0f,
                       BLENDING_SPEED_TYPE_DUPLICATE);
         return waitForStandby();
     }
@@ -276,8 +276,8 @@ static void cmdStop() {
 }
 
 static void cmdRecordPoint() {
-    LPROBOT_JOINT_POSE pj = g_robot.get_current_posj();
-    LPROBOT_TASK_POSE  px = g_robot.get_current_posx(COORDINATE_SYSTEM_BASE);
+    LPROBOT_POSE      pj = g_robot.get_current_posj();
+    LPROBOT_TASK_POSE px = g_robot.get_current_posx(COORDINATE_SYSTEM_BASE);
     if (!pj || !px) {
         emit("[INFO] record_point: could not read position");
         return;
@@ -298,8 +298,8 @@ static void cmdRecordPoint() {
     s.vel   = vel;
     s.acc   = acc;
     s.time_s = t;
-    for (int i = 0; i < NUM_JOINT; i++) s.posj[i] = pj->fJointPos[i];
-    for (int i = 0; i < NUM_TASK;  i++) s.posx[i] = px->fTargetPos[i];
+    for (int i = 0; i < NUM_JOINT; i++) s.posj[i] = pj->_fPosition[i];
+    for (int i = 0; i < NUM_TASK;  i++) s.posx[i] = px->_fTargetPos[i];
 
     {
         std::lock_guard<std::mutex> lk(g_points_mx);
@@ -386,7 +386,7 @@ static void cmdSavePlan() {
 static void cmdEnableHandGuide() {
     g_robot.set_robot_mode(ROBOT_MODE_MANUAL);
     float stx[NUM_TASK] = {3000.0f, 3000.0f, 3000.0f, 200.0f, 200.0f, 200.0f};
-    g_robot.task_compliance_ctrl(stx, 0, 0.0f);
+    g_robot.task_compliance_ctrl(stx, COORDINATE_SYSTEM_TOOL, 0.0f);
     emit("[INFO] hand guide enabled");
 }
 
@@ -466,7 +466,7 @@ int main(int argc, char** argv) {
 
     // Connect
     emit("[INFO] connecting to " + ip + ":" + std::to_string(port));
-    if (!g_robot.open_connection(ip.c_str(), port)) {
+    if (!g_robot.open_connection(ip, port)) {
         emit("[ERROR] open_connection failed");
         curl_global_cleanup();
         return 1;
