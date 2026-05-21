@@ -1,0 +1,875 @@
+import atexit
+import asyncio
+import json
+import os
+import signal
+import subprocess
+import time
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Optional
+
+try:
+    import serial
+    import serial.tools.list_ports
+except ImportError:
+    serial = None
+
+ARDUINO_VIDS = {
+    0x2341,  # Arduino LLC (Uno, Mega, etc.)
+    0x1A86,  # QinHeng CH340/CH341 (clones/Nanos)
+    0x0403,  # FTDI FT232 (older boards)
+}
+
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
+import sys
+# Nuitka --onefile extracts to a temp dir; __file__ points there instead of /app.
+# Fall back to the binary's own directory so ui/, plans/, stats/ are found correctly.
+BASE = Path(__file__).parent
+if not (BASE / "ui").exists():
+    BASE = Path(sys.argv[0]).resolve().parent
+
+DRFL_DAEMON_BIN = os.environ.get(
+    "DRFL_DAEMON_BIN",
+    str(BASE / "lux_drfl_daemon" / "build" / "drfl_daemon"),
+)
+PLANS_DIR = BASE / "plans"
+STATS_DIR = BASE / "stats"
+PLANS_DIR.mkdir(exist_ok=True)
+STATS_DIR.mkdir(exist_ok=True)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    scan = asyncio.create_task(_turntable_scan_task())
+    watchdog = asyncio.create_task(_turntable_watchdog_task())
+    yield
+    scan.cancel()
+    watchdog.cancel()
+    try:
+        await asyncio.gather(scan, watchdog)
+    except asyncio.CancelledError:
+        pass
+    _kill_robot_procs()
+
+
+app = FastAPI(lifespan=lifespan)
+
+# ── state ──────────────────────────────────────────────────────────────────
+_drfl_proc: Optional[subprocess.Popen] = None
+_drfl_lock = asyncio.Lock()
+
+# Signalling events for the background stdout reader
+_drfl_connect_event: Optional[asyncio.Event] = None
+_drfl_connect_success: bool = False
+_drfl_done_event: Optional[asyncio.Event] = None
+_drfl_done_result: int = 0      # 0 = ok, -1 = error/cancel
+_drfl_on_line = None            # async callback(text) per stdout line
+
+_active_plan: Optional[str] = None
+_captured_points: list = []
+_connected: bool = False
+_stop_requested: bool = False
+_ws_clients: list[WebSocket] = []
+_disconnect_task: Optional[asyncio.Task] = None
+
+# ── turntable state ────────────────────────────────────────────────────────
+_turntable = None  # serial.Serial instance when connected
+_tt_enabled: bool = False
+_tt_direction: str = "CW"
+_tt_speed: int = 50  # microseconds between pulses
+_tt_pending_port: Optional[str] = None
+_tt_rejected_ports: set = set()
+
+
+# ── helpers ────────────────────────────────────────────────────────────────
+
+def _kill_robot_procs():
+    """Kill DRFL daemon. Synchronous and idempotent — safe to call from atexit."""
+    global _drfl_proc
+    if _drfl_proc and _drfl_proc.poll() is None:
+        try:
+            os.killpg(os.getpgid(_drfl_proc.pid), signal.SIGINT)
+            _drfl_proc.wait(timeout=3)
+        except (ProcessLookupError, subprocess.TimeoutExpired, OSError):
+            pass
+
+def _close_turntable():
+    global _turntable, _tt_enabled
+    if _turntable is not None:
+        try:
+            if _turntable.is_open:
+                _turntable.write(b"DISABLE\n")
+                _turntable.close()
+        except Exception:
+            pass
+    _turntable = None
+    _tt_enabled = False
+
+atexit.register(_kill_robot_procs)
+atexit.register(_close_turntable)
+
+async def _turntable_scan_task():
+    """Scan for Arduino by VID every 2 s; set _tt_pending_port when found."""
+    global _tt_pending_port
+    while True:
+        if serial is not None and not (_turntable and _turntable.is_open):
+            try:
+                ports = serial.tools.list_ports.comports()
+                port_devices = {p.device for p in ports}
+                if _tt_pending_port and _tt_pending_port not in port_devices:
+                    _tt_pending_port = None
+                if _tt_pending_port is None:
+                    for p in ports:
+                        if p.vid in ARDUINO_VIDS and p.device not in _tt_rejected_ports:
+                            _tt_pending_port = p.device
+                            break
+            except Exception:
+                pass
+        await asyncio.sleep(2)
+
+async def _turntable_watchdog_task():
+    """Detect Arduino unplug by polling in_waiting every 2 s."""
+    while True:
+        if _turntable and _turntable.is_open:
+            try:
+                _ = _turntable.in_waiting
+            except Exception:
+                _close_turntable()
+        await asyncio.sleep(2)
+
+async def _schedule_safety_shutdown():
+    """Grace-period watchdog: if no browser client reconnects within 8 s, stop the robot."""
+    await asyncio.sleep(8)
+    global _connected, _active_plan
+    if _ws_clients:
+        return
+    _kill_robot_procs()
+    _connected = False
+    _active_plan = None
+
+def _plan_path(name: str) -> Path:
+    return PLANS_DIR / f"{name}.json"
+
+def _stats_path(name: str) -> Path:
+    return STATS_DIR / f"{name}.json"
+
+def _coerce_step_floats(step: dict) -> dict:
+    """Ensure all numeric fields in a step are stored as the correct Python types."""
+    if step.get("type") == "Turntable":
+        if "speed_us" in step:
+            step["speed_us"] = int(step["speed_us"])
+        if "duration" in step:
+            step["duration"] = float(step["duration"])
+        return step
+    if "pos" in step:
+        step["pos"] = [float(v) for v in step["pos"]]
+    for key in ("vel", "acc"):
+        if key in step:
+            v = step[key]
+            step[key] = [float(x) for x in v] if isinstance(v, list) else float(v)
+    if "time" in step:
+        step["time"] = float(step["time"])
+    return step
+
+def _load_stats(name: str) -> dict:
+    p = _stats_path(name)
+    if p.exists():
+        return json.loads(p.read_text())
+    return {"total_runs": 0, "success": 0, "fail": 0, "unknown": 0, "history": []}
+
+def _save_stats(name: str, stats: dict):
+    _stats_path(name).write_text(json.dumps(stats, indent=2))
+
+def _record_stat(name: str, result: str):
+    stats = _load_stats(name)
+    stats["total_runs"] += 1
+    stats[result] = stats.get(result, 0) + 1
+    stats["history"].append({"timestamp": datetime.now().isoformat(timespec="seconds"), "result": result})
+    _save_stats(name, stats)
+
+async def _broadcast(msg: str):
+    dead = []
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(msg)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        _ws_clients.remove(ws)
+
+async def _stream_proc(proc: subprocess.Popen, on_line=None):
+    loop = asyncio.get_event_loop()
+    while True:
+        line = await loop.run_in_executor(None, proc.stdout.readline)
+        if not line:
+            break
+        text = line.decode(errors="replace")
+        await _broadcast(text)
+        if on_line:
+            await on_line(text)
+
+
+# ── DRFL daemon IPC ────────────────────────────────────────────────────────
+
+async def _drfl_send(cmd: dict) -> bool:
+    """Write one JSON command to daemon stdin under lock. Returns False if daemon dead."""
+    async with _drfl_lock:
+        if _drfl_proc is None or _drfl_proc.poll() is not None:
+            return False
+        try:
+            line = json.dumps(cmd) + "\n"
+            _drfl_proc.stdin.write(line.encode())
+            _drfl_proc.stdin.flush()
+            return True
+        except OSError:
+            return False
+
+async def _drfl_reader_task():
+    """Continuously read daemon stdout, broadcast to WS, fire signalling events."""
+    global _drfl_connect_event, _drfl_connect_success
+    global _drfl_done_event, _drfl_done_result, _drfl_on_line
+
+    loop = asyncio.get_event_loop()
+    while _drfl_proc is not None:
+        line = await loop.run_in_executor(None, _drfl_proc.stdout.readline)
+        if not line:
+            break
+        text = line.decode(errors="replace")
+        await _broadcast(text)
+
+        # Connection phase — signal success or failure so _drfl_start() can unblock
+        ev = _drfl_connect_event
+        if ev is not None and not ev.is_set():
+            if "[CONNECTED]" in text:
+                _drfl_connect_success = True
+                ev.set()
+            elif "[ERROR]" in text:
+                _drfl_connect_success = False
+                ev.set()
+
+        # Plan phase — signal [DONE] or [ERROR] so _run_robot_segment() can unblock
+        dev = _drfl_done_event
+        if dev is not None and not dev.is_set():
+            if "[DONE]" in text:
+                _drfl_done_result = 0
+                dev.set()
+            elif "[ERROR]" in text:
+                _drfl_done_result = -1
+                dev.set()
+
+        # Per-line callback (parallel turntable mode passes tt_step_callback here)
+        cb = _drfl_on_line
+        if cb:
+            await cb(text)
+
+async def _drfl_start() -> bool:
+    """Spawn daemon process, start reader task, wait up to 30 s for [CONNECTED]."""
+    global _drfl_proc, _drfl_connect_event, _drfl_connect_success
+
+    _drfl_connect_event = asyncio.Event()
+    _drfl_connect_success = False
+
+    _drfl_proc = subprocess.Popen(
+        [DRFL_DAEMON_BIN, "--ip", "192.168.0.20", "--port", "12345"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid,
+    )
+
+    asyncio.get_event_loop().create_task(_drfl_reader_task())
+
+    try:
+        await asyncio.wait_for(_drfl_connect_event.wait(), timeout=30.0)
+    except asyncio.TimeoutError:
+        await _broadcast("[ERROR] DRFL daemon connection timeout\n")
+        _drfl_connect_event = None
+        return False
+
+    _drfl_connect_event = None
+    return _drfl_connect_success
+
+
+# ── routes ─────────────────────────────────────────────────────────────────
+
+app.mount("/ui", StaticFiles(directory=BASE / "ui"), name="ui")
+
+@app.get("/")
+async def index():
+    return FileResponse(BASE / "ui" / "index.html")
+
+@app.get("/api/plans")
+async def list_plans():
+    result = []
+    for p in sorted(PLANS_DIR.glob("*.json")):
+        plan = json.loads(p.read_text())
+        stats = _load_stats(plan["name"])
+        result.append({**plan, "stats": stats})
+    return result
+
+class PlanBody(BaseModel):
+    name: str
+    steps: list
+    turntable_parallel: Optional[dict] = None
+
+@app.post("/api/plans")
+async def create_plan(body: PlanBody):
+    p = _plan_path(body.name)
+    if p.exists():
+        raise HTTPException(400, "Plan already exists")
+    steps = [_coerce_step_floats(s) for s in body.steps]
+    data = {"name": body.name, "created_at": datetime.now().isoformat(timespec="seconds"), "steps": steps}
+    if body.turntable_parallel is not None:
+        data["turntable_parallel"] = body.turntable_parallel
+    p.write_text(json.dumps(data, indent=2))
+    return data
+
+class ImportBody(BaseModel):
+    name: str
+    steps: list
+    created_at: Optional[str] = None
+
+@app.post("/api/plans/import")
+async def import_plan(body: ImportBody):
+    data = body.model_dump()
+    if not data["created_at"]:
+        data["created_at"] = datetime.now().isoformat(timespec="seconds")
+    data["steps"] = [_coerce_step_floats(s) for s in data["steps"]]
+    _plan_path(data["name"]).write_text(json.dumps(data, indent=2))
+    await _broadcast(f"[PLAN_IMPORTED] {data['name']}\n")
+    return {"ok": True, "name": data["name"]}
+
+@app.get("/api/plans/{name}")
+async def get_plan(name: str):
+    p = _plan_path(name)
+    if not p.exists():
+        raise HTTPException(404, "Not found")
+    return json.loads(p.read_text())
+
+class UpdateBody(BaseModel):
+    steps: list
+    turntable_parallel: Optional[dict] = None
+
+@app.put("/api/plans/{name}")
+async def update_plan(name: str, body: UpdateBody):
+    p = _plan_path(name)
+    if not p.exists():
+        raise HTTPException(404, "Not found")
+    data = json.loads(p.read_text())
+    data["steps"] = [_coerce_step_floats(s) for s in body.steps]
+    if body.turntable_parallel is not None:
+        data["turntable_parallel"] = body.turntable_parallel
+    else:
+        data.pop("turntable_parallel", None)
+    p.write_text(json.dumps(data, indent=2))
+    return data
+
+@app.delete("/api/plans/{name}")
+async def delete_plan(name: str):
+    p = _plan_path(name)
+    if not p.exists():
+        raise HTTPException(404, "Not found")
+    p.unlink()
+    sp = _stats_path(name)
+    if sp.exists():
+        sp.unlink()
+    return {"ok": True}
+
+# ── robot control ──────────────────────────────────────────────────────────
+
+class ConnectBody(BaseModel):
+    sudo_password: str
+    interface: str = "enp2s0"
+
+@app.post("/api/robot/connect")
+async def robot_connect(body: ConnectBody):
+    global _connected
+    pw = body.sudo_password
+    iface = body.interface
+
+    async def run_step(cmd: str, label: str):
+        await _broadcast(f"\n[STEP] {label}\n")
+        proc = await asyncio.create_subprocess_shell(
+            cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
+        )
+        async for chunk in proc.stdout:
+            await _broadcast(chunk.decode(errors="replace"))
+        rc = await proc.wait()
+        if rc != 0:
+            raise RuntimeError(f"{label} failed (exit {rc})")
+
+    try:
+        await run_step(
+            f"echo '{pw}' | sudo -S ip addr flush dev {iface} && "
+            f"echo '{pw}' | sudo -S ip link set {iface} up && "
+            f"echo '{pw}' | sudo -S ip addr add 192.168.0.50/24 dev {iface}",
+            "Configuring PC IP address"
+        )
+        await run_step("ping -c 4 192.168.0.20", "Pinging robot at 192.168.0.20")
+
+        await _broadcast("\n[STEP] Connecting DRFL daemon...\n")
+        ok = await _drfl_start()
+        if not ok:
+            raise RuntimeError("DRFL daemon failed to connect to robot")
+
+        _connected = True
+        return {"ok": True}
+    except RuntimeError as e:
+        await _broadcast(f"[ERROR] {e}\n")
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+class StartBody(BaseModel):
+    plan_name: str
+
+@app.post("/api/robot/start")
+async def robot_start(body: StartBody):
+    global _active_plan
+    if _active_plan is not None:
+        raise HTTPException(409, "A plan is already running")
+    p = _plan_path(body.plan_name)
+    if not p.exists():
+        raise HTTPException(404, "Plan not found")
+    _active_plan = body.plan_name
+    asyncio.get_event_loop().create_task(_run_plan_task(body.plan_name, p.resolve()))
+    return {"ok": True}
+
+async def _run_plan_task(plan_name: str, plan_path: Path):
+    global _active_plan, _stop_requested
+
+    plan_data = json.loads(plan_path.read_text())
+    steps = plan_data.get("steps", [])
+    active_steps = [s for s in steps if s.get("enabled", True)]
+    has_robot_steps = any(s.get("type") != "Turntable" for s in active_steps)
+
+    tt_parallel = plan_data.get("turntable_parallel")
+    is_parallel = tt_parallel is not None
+    tt_step_callback = None
+
+    if is_parallel:
+        # Parallel: one daemon run_plan loops, turntable reacts to [STEP_START] events
+        segments = [("robot", active_steps)]
+        use_single_pass = False
+        should_loop = False  # daemon loops internally
+
+        with_tt = [s.get("with_turntable", False) for s in active_steps]
+
+        async def tt_step_callback(text):
+            if "[STEP_START]" not in text:
+                return
+            try:
+                idx = int(text.split("[STEP_START]")[1].strip().split()[0])
+            except (ValueError, IndexError):
+                return
+            if not (_turntable and _turntable.is_open):
+                return
+            try:
+                if idx < len(with_tt) and with_tt[idx]:
+                    _turntable.write(b"ENABLE\n")
+                    await asyncio.sleep(0.05)
+                    _turntable.write(f"DIR:{tt_parallel['direction']}\n".encode())
+                    await asyncio.sleep(0.05)
+                    _turntable.write(f"SPEED:{int(tt_parallel['speed_us'])}\n".encode())
+                else:
+                    _turntable.write(b"DISABLE\n")
+            except Exception as e:
+                await _broadcast(f"[WARN] Turntable error: {e}\n")
+    else:
+        # Sequential: split at Turntable step boundaries
+        segments = []
+        robot_buf: list = []
+        for step in active_steps:
+            if step.get("type") == "Turntable":
+                if robot_buf:
+                    segments.append(("robot", list(robot_buf)))
+                    robot_buf = []
+                segments.append(("turntable", step))
+            else:
+                robot_buf.append(step)
+        if robot_buf:
+            segments.append(("robot", robot_buf))
+
+        has_turntable_segs = any(s[0] == "turntable" for s in segments)
+        use_single_pass = has_turntable_segs
+        should_loop = has_turntable_segs or not has_robot_steps
+
+    t_start = time.monotonic()
+    last_rc = 0
+
+    while True:
+        for seg_type, seg_data in segments:
+            if _stop_requested:
+                break
+            if seg_type == "robot":
+                last_rc = await _run_robot_segment(
+                    seg_data, plan_data, use_single_pass, on_line=tt_step_callback
+                )
+            else:
+                await _run_turntable_segment(seg_data)
+        if _stop_requested or not should_loop:
+            break
+
+    # Parallel mode: ensure turntable off after stop
+    if is_parallel and _turntable and _turntable.is_open:
+        try:
+            _turntable.write(b"DISABLE\n")
+        except Exception:
+            pass
+
+    elapsed_total = time.monotonic() - t_start
+    await _broadcast(f"[STAT] Finished in {elapsed_total:.1f}s\n")
+
+    if _stop_requested:
+        result = "success"
+        _stop_requested = False
+    else:
+        result = "unknown" if last_rc < 0 else "fail"
+
+    _record_stat(plan_name, result)
+    await _broadcast(f"[DONE] Plan '{plan_name}' finished — {result}\n")
+    _active_plan = None
+
+
+async def _run_robot_segment(seg_data: list, plan_data: dict, single_pass: bool, on_line=None) -> int:
+    """Send run_plan to daemon; await [DONE] or [ERROR] before returning."""
+    global _drfl_done_event, _drfl_done_result, _drfl_on_line
+
+    done_event = asyncio.Event()
+    _drfl_done_event = done_event
+    _drfl_done_result = 0
+    _drfl_on_line = on_line
+
+    ok = await _drfl_send({
+        "cmd": "run_plan",
+        "plan": {
+            "name": plan_data["name"],
+            "created_at": plan_data.get("created_at", ""),
+            "steps": seg_data,
+        },
+        "single_pass": single_pass,
+        "loop": not single_pass,
+    })
+
+    if not ok:
+        _drfl_done_event = None
+        _drfl_on_line = None
+        return -1
+
+    await done_event.wait()
+    _drfl_on_line = None
+    _drfl_done_event = None
+    return _drfl_done_result
+
+
+async def _run_turntable_segment(seg_data: dict):
+    global _stop_requested
+    direction = seg_data.get("direction", "CW")
+    speed_us = int(seg_data.get("speed_us", 500))
+    duration = float(seg_data.get("duration", 1.0))
+
+    if _turntable is None or not _turntable.is_open:
+        await _broadcast("[WARN] Turntable not connected — skipping step\n")
+        return
+
+    await _broadcast(f"Turntable: {direction} · {speed_us} μs · {duration:.1f}s\n")
+    try:
+        _turntable.write(b"ENABLE\n")
+        await asyncio.sleep(0.05)
+        _turntable.write(f"DIR:{direction}\n".encode())
+        await asyncio.sleep(0.05)
+        _turntable.write(f"SPEED:{speed_us}\n".encode())
+        elapsed = 0.0
+        while elapsed < duration and not _stop_requested:
+            await asyncio.sleep(0.1)
+            elapsed += 0.1
+        _turntable.write(b"DISABLE\n")
+    except Exception as e:
+        await _broadcast(f"[WARN] Turntable error: {e}\n")
+
+@app.post("/api/robot/stop")
+async def robot_stop():
+    global _active_plan, _stop_requested
+    if _active_plan is None:
+        raise HTTPException(409, "No plan running")
+    _stop_requested = True
+    # Send stop to daemon (no-op if currently in a turntable segment)
+    if _drfl_proc and _drfl_proc.poll() is None:
+        await _drfl_send({"cmd": "stop"})
+    return {"ok": True}
+
+@app.post("/api/robot/disconnect")
+async def robot_disconnect():
+    global _drfl_proc, _connected, _active_plan
+    if _drfl_proc and _drfl_proc.poll() is None:
+        await _drfl_send({"cmd": "close"})
+        loop = asyncio.get_event_loop()
+        try:
+            await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: _drfl_proc.wait(timeout=3)),
+                timeout=4.0,
+            )
+        except (asyncio.TimeoutError, subprocess.TimeoutExpired):
+            try:
+                os.killpg(os.getpgid(_drfl_proc.pid), signal.SIGINT)
+            except (ProcessLookupError, OSError):
+                pass
+    _drfl_proc = None
+    _captured_points.clear()
+    _connected = False
+    _active_plan = None
+    await _broadcast("[DISCONNECTED]\n")
+    return {"ok": True}
+
+@app.get("/api/robot/status")
+async def robot_status():
+    running = _active_plan is not None
+    return {"connected": _connected, "running": running, "active_plan": _active_plan}
+
+# ── hand-teach ─────────────────────────────────────────────────────────────
+
+@app.post("/api/robot/hand_guide/enable")
+async def hand_guide_enable():
+    ok = await _drfl_send({"cmd": "enable_hand_guide"})
+    return {"ok": ok}
+
+@app.post("/api/robot/hand_guide/disable")
+async def hand_guide_disable():
+    ok = await _drfl_send({"cmd": "disable_hand_guide"})
+    return {"ok": ok}
+
+@app.post("/api/robot/hand_guide/record")
+async def hand_guide_record():
+    # Daemon POSTs directly to /api/robot/hand_guide/captured; no stdout echo
+    ok = await _drfl_send({"cmd": "record_point"})
+    return {"ok": ok}
+
+@app.post("/api/robot/hand_guide/clear")
+async def hand_guide_clear():
+    global _captured_points
+    ok = await _drfl_send({"cmd": "clear_plan"})
+    if ok:
+        _captured_points.clear()
+    return {"ok": ok}
+
+@app.get("/api/robot/hand_guide/points")
+async def hand_guide_points():
+    return {"points": _captured_points}
+
+@app.delete("/api/robot/hand_guide/points")
+async def hand_guide_clear_points():
+    global _captured_points
+    _captured_points.clear()
+    return {"ok": True}
+
+@app.post("/api/robot/hand_guide/captured")
+async def hand_guide_captured(request: Request):
+    """Called by DRFL daemon after each record_point to push step data."""
+    point = await request.json()
+    _captured_points.append(point)
+    await _broadcast(f"[CAPTURE] {json.dumps(point)}\n")
+    return {"ok": True, "count": len(_captured_points)}
+
+@app.post("/api/robot/hand_guide/save")
+async def hand_guide_save():
+    ok = await _drfl_send({"cmd": "save_plan"})
+    return {"ok": ok}
+
+class HandGuideTypeBody(BaseModel):
+    move_type: str
+
+@app.post("/api/robot/hand_guide/type")
+async def hand_guide_type(body: HandGuideTypeBody):
+    if body.move_type not in ("MoveJ", "MoveL"):
+        raise HTTPException(400, "move_type must be MoveJ or MoveL")
+    ok = await _drfl_send({"cmd": "set_param", "key": "current_type", "value": body.move_type})
+    return {"ok": ok}
+
+# ── turntable control ──────────────────────────────────────────────────────
+
+class TurntableConnectBody(BaseModel):
+    port: str = "/dev/ttyACM0"
+    baud: int = 9600
+
+@app.post("/api/turntable/connect")
+async def turntable_connect(body: TurntableConnectBody):
+    global _turntable
+    global _tt_pending_port
+    if serial is None:
+        raise HTTPException(500, "pyserial not installed — run: pip install pyserial")
+    _close_turntable()
+    try:
+        _turntable = serial.Serial(body.port, body.baud, timeout=1)
+        asyncio.create_task(_tt_sync_state())
+        return {"ok": True}
+    except Exception as e:
+        _turntable = None
+        if isinstance(e, PermissionError) or getattr(e, "errno", None) == 13:
+            _tt_pending_port = body.port
+            raise HTTPException(403, "Permission denied — enter sudo password or add user to dialout group")
+        raise HTTPException(500, str(e))
+
+@app.post("/api/turntable/disconnect")
+async def turntable_disconnect():
+    _close_turntable()
+    return {"ok": True}
+
+@app.get("/api/turntable/status")
+async def turntable_status():
+    connected = _turntable is not None and _turntable.is_open
+    return {
+        "connected": connected,
+        "enabled": _tt_enabled,
+        "direction": _tt_direction,
+        "speed": _tt_speed,
+        "pending_port": _tt_pending_port,
+        "rejected_ports": sorted(_tt_rejected_ports),
+    }
+
+class TurntableConfirmBody(BaseModel):
+    port: str
+    sudo_password: str = ""
+
+@app.post("/api/turntable/confirm")
+async def turntable_confirm(body: TurntableConfirmBody):
+    global _turntable, _tt_pending_port
+    if serial is None:
+        raise HTTPException(500, "pyserial not installed")
+    if body.port != _tt_pending_port:
+        raise HTTPException(400, "Port is not pending confirmation")
+    _close_turntable()
+    def _is_permission_err(e: Exception) -> bool:
+        return isinstance(e, PermissionError) or getattr(e, "errno", None) == 13
+
+    try:
+        _turntable = serial.Serial(body.port, 9600, timeout=1)
+        _tt_pending_port = None
+        asyncio.create_task(_tt_sync_state())
+        return {"ok": True}
+    except Exception as e:
+        _turntable = None
+        if not _is_permission_err(e):
+            raise HTTPException(500, str(e))
+        if not body.sudo_password:
+            raise HTTPException(403, "Permission denied — enter sudo password or add user to dialout group")
+        result = subprocess.run(
+            ["sudo", "-S", "chmod", "a+rw", body.port],
+            input=(body.sudo_password + "\n").encode(),
+            capture_output=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            raise HTTPException(500, "chmod failed — wrong sudo password?")
+        try:
+            _turntable = serial.Serial(body.port, 9600, timeout=1)
+            _tt_pending_port = None
+            asyncio.create_task(_tt_sync_state())
+            return {"ok": True}
+        except Exception as e2:
+            _turntable = None
+            raise HTTPException(500, str(e2))
+
+class TurntableRejectBody(BaseModel):
+    port: str
+
+@app.post("/api/turntable/reject")
+async def turntable_reject(body: TurntableRejectBody):
+    global _tt_pending_port
+    _tt_rejected_ports.add(body.port)
+    if _tt_pending_port == body.port:
+        _tt_pending_port = None
+    return {"ok": True}
+
+def _tt_send(cmd: str):
+    if _turntable is None or not _turntable.is_open:
+        raise HTTPException(409, "Turntable not connected")
+    _turntable.write((cmd + "\n").encode())
+
+async def _tt_sync_state():
+    await asyncio.sleep(0.3)
+    try:
+        _tt_send(f"DIR:{_tt_direction}")
+        _tt_send(f"SPEED:{_tt_speed}")
+    except Exception:
+        pass
+
+@app.post("/api/turntable/enable")
+async def turntable_enable():
+    global _tt_enabled
+    _tt_send(f"DIR:{_tt_direction}")
+    _tt_send(f"SPEED:{_tt_speed}")
+    _tt_send("ENABLE")
+    _tt_enabled = True
+    return {"ok": True}
+
+@app.post("/api/turntable/disable")
+async def turntable_disable():
+    global _tt_enabled
+    _tt_send("DISABLE")
+    _tt_enabled = False
+    return {"ok": True}
+
+class TurntableDirectionBody(BaseModel):
+    direction: str
+
+@app.post("/api/turntable/direction")
+async def turntable_direction(body: TurntableDirectionBody):
+    global _tt_direction
+    if body.direction not in ("CW", "CCW"):
+        raise HTTPException(400, "direction must be CW or CCW")
+    _tt_send(f"DIR:{body.direction}")
+    _tt_direction = body.direction
+    return {"ok": True}
+
+class TurntableSpeedBody(BaseModel):
+    delay_us: int
+
+@app.post("/api/turntable/speed")
+async def turntable_speed(body: TurntableSpeedBody):
+    global _tt_speed
+    if body.delay_us < 3:
+        raise HTTPException(400, "delay_us must be >= 3")
+    _tt_send(f"SPEED:{body.delay_us}")
+    _tt_speed = body.delay_us
+    return {"ok": True}
+
+# ── WebSocket ──────────────────────────────────────────────────────────────
+
+@app.websocket("/ws/terminal")
+async def ws_terminal(ws: WebSocket):
+    global _disconnect_task
+    await ws.accept()
+    # Purge stale connections before adding new one
+    dead = []
+    for existing in list(_ws_clients):
+        try:
+            await existing.send_text("")
+        except Exception:
+            dead.append(existing)
+    for d in dead:
+        _ws_clients.remove(d)
+    _ws_clients.append(ws)
+    # Cancel any pending safety-shutdown watchdog — client is back
+    if _disconnect_task and not _disconnect_task.done():
+        _disconnect_task.cancel()
+        _disconnect_task = None
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        if ws in _ws_clients:
+            _ws_clients.remove(ws)
+        # Start watchdog only when the last client drops
+        if not _ws_clients:
+            _disconnect_task = asyncio.get_event_loop().create_task(
+                _schedule_safety_shutdown()
+            )
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

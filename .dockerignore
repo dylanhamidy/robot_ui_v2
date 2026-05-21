@@ -1,0 +1,14 @@
+.venv/
+.vscode/
+.claude/
+.agents
+__pycache__/
+*.pyc
+*.md
+plans/
+stats/
+dist/
+docs/
+build/
+*.json
+*.ino

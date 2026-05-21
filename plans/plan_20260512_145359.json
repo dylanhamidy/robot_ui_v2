@@ -1,0 +1,28 @@
+{
+  "name": "plan_20260512_145359",
+  "created_at": "2026-05-12T14:53:59",
+  "steps": [
+    {
+      "type": "Turntable",
+      "direction": "CW",
+      "speed_us": 158,
+      "duration": 3.0,
+      "enabled": false
+    },
+    {
+      "type": "MoveJ",
+      "pos": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "vel": 30.0,
+      "acc": 30.0,
+      "time": 2.0,
+      "enabled": true
+    }
+  ]
+}
