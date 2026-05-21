@@ -51,10 +51,9 @@ function app() {
     setupDone: false,
     setupTermLines: [],
     setupSteps: [
-      { label: "Robot workspace", state: "pending" },
       { label: "Configuring PC IP address...", state: "pending" },
       { label: "Pinging robot at 192.168.0.20...", state: "pending" },
-      { label: "Launching RViz in real mode...", state: "pending" },
+      { label: "Connecting DRFL daemon...", state: "pending" },
     ],
 
     // Plan modal
@@ -109,25 +108,16 @@ function app() {
           this.setupTermLines.push(l);
           if (this.setupTermLines.length > 500) this.setupTermLines.shift();
 
-          if (l.includes("[STEP] Checking robot workspace")) {
+          if (l.includes("[STEP] Configuring")) {
             this.setupSteps[0].state = "running";
-            this.setupSteps[0].label = "Checking robot workspace...";
-          } else if (l.includes("[STEP] Building robot workspace")) {
-            this.setupSteps[0].label = "Building robot workspace...";
-          } else if (l.includes("[INFO] Workspace ready")) {
-            this.setupSteps[0].state = "ok";
-            this.setupSteps[0].label = "Robot workspace ready";
-          } else if (l.includes("[STEP] Configuring")) {
-            this.setupSteps[1].state = "running";
           } else if (l.includes("[STEP] Pinging")) {
+            this.setupSteps[0].state = "ok";
+            this.setupSteps[1].state = "running";
+          } else if (l.includes("[STEP] Connecting DRFL")) {
             this.setupSteps[1].state = "ok";
             this.setupSteps[2].state = "running";
-          } else if (l.includes("[STEP] Launching")) {
-            this.setupSteps[2].state = "ok";
-            this.setupSteps[3].state = "running";
-          } else if (l.includes("[INFO] RViz")) {
-            this.setupSteps[3].state = "ok";
           } else if (l.includes("[CONNECTED]")) {
+            this.setupSteps[2].state = "ok";
             this.connected = true;
             this.setupDone = true;
             this.setupRunning = false;
@@ -221,10 +211,9 @@ function app() {
       this.setupDone = false;
       this.setupTermLines = [];
       this.setupSteps = [
-        { label: "Robot workspace", state: "pending" },
         { label: "Configuring PC IP address...", state: "pending" },
         { label: "Pinging robot at 192.168.0.20...", state: "pending" },
-        { label: "Launching RViz in real mode...", state: "pending" },
+        { label: "Connecting DRFL daemon...", state: "pending" },
       ];
     },
 
