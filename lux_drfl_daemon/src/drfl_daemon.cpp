@@ -42,6 +42,7 @@ static CDRFLEx g_robot;
 
 static std::atomic<bool> g_shutdown{false};
 static std::atomic<bool> g_cancel{false};
+static std::atomic<bool> g_connected{false};  // true once [CONNECTED] emitted
 
 // Thread-safe stdout
 static std::mutex g_out_mutex;
@@ -102,14 +103,23 @@ static void onAccessControl(const MONITORING_ACCESS_CONTROL ctrl) {
     }
     g_access_cv.notify_all();
     if (ctrl == MONITORING_ACCESS_CONTROL_LOSS) {
-        emit("[ERROR] Access control lost");
-        g_shutdown = true;
+        if (g_connected.load()) {
+            emit("[ERROR] Access control lost");
+            g_shutdown = true;
+            g_state_cv.notify_all();  // wake waitForStandby
+        } else {
+            // LOSS during initial handshake = controller notifying us that the
+            // previous holder (e.g. teach pendant) just gave up access.
+            // GRANT follows immediately — do not abort.
+            emit("[INFO] Access control transferring (previous holder released)");
+        }
     }
 }
 
 static void onDisconnected() {
     emit("[DISCONNECTED]");
     g_shutdown = true;
+    g_state_cv.notify_all();  // wake waitForStandby
 }
 
 // ── libcurl HTTP POST ─────────────────────────────────────────────────────────
@@ -186,8 +196,10 @@ static bool execStep(const json& step) {
             auto tt = step.find("time");
             t   = (tt != step.end()) ? tt->get<float>() : g_default_time;
         }
-        g_robot.movej(pos, vel, acc, t, MOVE_MODE_ABSOLUTE, 0.0f,
-                      BLENDING_SPEED_TYPE_DUPLICATE);
+        bool ok = g_robot.movej(pos, vel, acc, t, MOVE_MODE_ABSOLUTE, 0.0f,
+                                BLENDING_SPEED_TYPE_DUPLICATE);
+        emit("[INFO] movej returned " + std::string(ok ? "true" : "false"));
+        if (!ok) return false;
         return waitForStandby();
 
     } else if (type == "MoveL") {
@@ -472,6 +484,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    g_robot.setup_monitoring_version(1);
+
     // Request exclusive access
     g_robot.ManageAccessControl(MANAGE_ACCESS_CONTROL_FORCE_REQUEST);
 
@@ -483,7 +497,8 @@ int main(int argc, char** argv) {
                    g_shutdown.load();
         });
         if (!ok || g_shutdown) {
-            emit("[ERROR] access control grant timeout");
+            emit(ok ? "[ERROR] access control denied or lost during handshake"
+                    : "[ERROR] access control grant timeout");
             g_robot.close_connection();
             curl_global_cleanup();
             return 1;
@@ -507,6 +522,14 @@ int main(int argc, char** argv) {
         }
     }
 
+    SYSTEM_VERSION sv{};
+    if (g_robot.get_system_version(&sv))
+        emit(std::string("[INFO] Controller: ") + sv._szController +
+             "  Library: " + g_robot.get_library_version());
+
+    g_robot.set_robot_system(ROBOT_SYSTEM_REAL);
+    g_robot.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    g_connected = true;
     emit("[CONNECTED]");
 
     // Command loop
