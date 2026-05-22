@@ -14,7 +14,7 @@ No ROS2. Direct DRFL C++ API. Works on Ubuntu 18.04 / 20.04 / 22.04.
 sudo apt-get install -y g++ cmake libcurl4-openssl-dev git
 ```
 
-No `libpoco-dev` needed — Doosan bundles Poco inside the API-DRFL repo.
+No `libpoco-dev` needed, Doosan bundles Poco inside the API-DRFL repo.
 
 ## Build daemon
 
@@ -37,7 +37,7 @@ Open `http://localhost:8000`. Internet needed for CDN scripts.
 
 ## How it works
 
-- `server.py` — FastAPI + WebSocket backend, no database
+- `server.py` : FastAPI + WebSocket backend, no database
 - On Connect: spawns `lux_drfl_daemon/build/drfl_daemon` as persistent subprocess
 - Daemon owns DRFL robot connection, executes all motion commands
 - Commands = newline-delimited JSON → daemon stdin
