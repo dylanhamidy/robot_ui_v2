@@ -404,7 +404,35 @@ async def robot_connect(body: ConnectBody):
         if rc != 0:
             raise RuntimeError(f"{label} failed (exit {rc})")
 
+    daemon_bin = Path(DRFL_DAEMON_BIN)
+    daemon_src_dir = BASE / "lux_drfl_daemon"
+
+    def _daemon_needs_build() -> bool:
+        if not daemon_bin.exists():
+            return True
+        src_files = list((daemon_src_dir / "src").glob("**/*.cpp")) + \
+                    list((daemon_src_dir / "src").glob("**/*.h")) + \
+                    [daemon_src_dir / "CMakeLists.txt"]
+        bin_mtime = daemon_bin.stat().st_mtime
+        return any(f.exists() and f.stat().st_mtime > bin_mtime for f in src_files)
+
     try:
+        if _daemon_needs_build():
+            submodule_marker = daemon_src_dir / "third_party" / "API-DRFL" / "DRFLEx.h"
+            if not submodule_marker.exists():
+                await run_step(
+                    f"git -C {BASE} submodule update --init lux_drfl_daemon/third_party/API-DRFL",
+                    "Initialising API-DRFL submodule"
+                )
+            await run_step(
+                f"cmake -B {daemon_src_dir}/build -DDRCF_VERSION=3 {daemon_src_dir}",
+                "Configuring DRFL daemon (cmake)"
+            )
+            await run_step(
+                f"cmake --build {daemon_src_dir}/build -j$(nproc)",
+                "Building DRFL daemon"
+            )
+
         await run_step(
             f"echo '{pw}' | sudo -S ip addr flush dev {iface} && "
             f"echo '{pw}' | sudo -S ip link set {iface} up && "
