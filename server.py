@@ -38,6 +38,8 @@ DRFL_DAEMON_BIN = os.environ.get(
     "DRFL_DAEMON_BIN",
     str(BASE / "lux_drfl_daemon" / "build" / "drfl_daemon"),
 )
+ROBOT_IP = os.environ.get("ROBOT_IP", "192.168.0.20")
+PC_IP = os.environ.get("PC_IP", "192.168.0.50")
 PLANS_DIR = BASE / "plans"
 STATS_DIR = BASE / "stats"
 PLANS_DIR.mkdir(exist_ok=True)
@@ -276,7 +278,7 @@ async def _drfl_start() -> bool:
     _drfl_connect_success = False
 
     _drfl_proc = subprocess.Popen(
-        [DRFL_DAEMON_BIN, "--ip", "192.168.0.20", "--port", "12345"],
+        [DRFL_DAEMON_BIN, "--ip", ROBOT_IP, "--port", "12345"],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -436,10 +438,10 @@ async def robot_connect(body: ConnectBody):
         await run_step(
             f"echo '{pw}' | sudo -S ip addr flush dev {iface} && "
             f"echo '{pw}' | sudo -S ip link set {iface} up && "
-            f"echo '{pw}' | sudo -S ip addr add 192.168.0.50/24 dev {iface}",
+            f"echo '{pw}' | sudo -S ip addr add {PC_IP}/24 dev {iface}",
             "Configuring PC IP address"
         )
-        await run_step("ping -c 4 192.168.0.20", "Pinging robot at 192.168.0.20")
+        await run_step(f"ping -c 4 {ROBOT_IP}", f"Pinging robot at {ROBOT_IP}")
 
         await _broadcast("\n[STEP] Connecting DRFL daemon...\n")
         ok = await _drfl_start()

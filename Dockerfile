@@ -89,6 +89,8 @@ RUN mkdir -p /app/plans /app/stats \
 
 ENV DRFL_DAEMON_BIN=/app/bin/drfl_daemon
 ENV LD_LIBRARY_PATH=/app/lib
+ENV ROBOT_IP=192.168.0.20
+ENV PC_IP=192.168.0.50
 
 EXPOSE 8000
 

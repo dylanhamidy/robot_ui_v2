@@ -37,6 +37,10 @@ for dev in /dev/ttyACM* /dev/ttyUSB*; do
     [ -e "$dev" ] && DEVICE_FLAGS="$DEVICE_FLAGS --device $dev"
 done
 
+ENV_FLAGS=""
+[ -n "${ROBOT_IP}" ] && ENV_FLAGS="$ENV_FLAGS -e ROBOT_IP=${ROBOT_IP}"
+[ -n "${PC_IP}" ]    && ENV_FLAGS="$ENV_FLAGS -e PC_IP=${PC_IP}"
+
 docker run -d \
     --name robot_ui \
     --net=host \
@@ -45,6 +49,7 @@ docker run -d \
     -v "${DATA_DIR}/stats":/app/stats \
     --group-add dialout \
     $DEVICE_FLAGS \
+    $ENV_FLAGS \
     --restart unless-stopped \
     "${IMAGE}"
 
