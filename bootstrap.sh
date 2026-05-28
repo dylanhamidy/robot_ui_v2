@@ -28,10 +28,7 @@ fi
 # ── Step 3: Prepare data dirs ─────────────────────────────────────────────
 mkdir -p "${DATA_DIR}/plans" "${DATA_DIR}/stats"
 
-# ── Step 4: Allow X11 for RViz2 ──────────────────────────────────────────
-xhost +local:docker 2>/dev/null || true
-
-# ── Step 5: Start container ───────────────────────────────────────────────
+# ── Step 4: Start container ──────────────────────────────────────────────
 docker rm -f robot_ui 2>/dev/null || true
 
 # Pass through any Arduino USB serial devices
@@ -44,8 +41,6 @@ docker run -d \
     --name robot_ui \
     --net=host \
     --cap-add=NET_ADMIN \
-    -e DISPLAY="${DISPLAY}" \
-    -v /tmp/.X11-unix:/tmp/.X11-unix \
     -v "${DATA_DIR}/plans":/app/plans \
     -v "${DATA_DIR}/stats":/app/stats \
     --group-add dialout \

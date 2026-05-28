@@ -15,6 +15,7 @@ RUN apt-get update && apt-get install -y \
     git \
     pkg-config \
     libcurl4-openssl-dev \
+    libpcre3-dev \
     lsb-release \
     && rm -rf /var/lib/apt/lists/*
 # Note: no libpoco-dev — daemon uses Doosan-bundled Poco from API-DRFL submodule
@@ -71,6 +72,7 @@ RUN apt-get update && apt-get install -y \
     iputils-ping \
     sudo \
     libcurl4 \
+    libpcre3 \
     && rm -rf /var/lib/apt/lists/*
 # No libpoco-dev or libpocofoundationXX — we bundle Doosan's Poco .so files below
 
