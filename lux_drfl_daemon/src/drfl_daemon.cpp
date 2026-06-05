@@ -695,6 +695,7 @@ int main(int argc, char** argv) {
     g_robot.set_on_log_alarm(onLogAlarm);
     g_robot.set_on_tp_log(onTpLog);
     g_robot.set_on_monitoring_safety_stop_type(onSafetyStopType);
+    g_robot.set_on_monitoring_data([](const LPMONITORING_DATA) {}); // keepalive — controller drops if no cb fires for 3s
 
     // Connect
     emit("[INFO] connecting to " + ip + ":" + std::to_string(port));
@@ -751,6 +752,16 @@ int main(int argc, char** argv) {
     g_robot.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
     g_connected = true;
     emit("[CONNECTED]");
+
+    // Keepalive thread — polls get_robot_state() every 30s to prevent TCP idle timeout
+    std::thread keepalive([] {
+        while (!g_shutdown) {
+            for (int i = 0; i < 30 && !g_shutdown; i++)
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+            if (!g_shutdown) g_robot.get_robot_state();
+        }
+    });
+    keepalive.detach();
 
     // Command loop
     std::string line;
