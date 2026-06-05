@@ -74,10 +74,14 @@ static float        g_default_vel{30.0f};
 static float        g_default_acc{30.0f};
 static float        g_default_time{0.0f};
 
-// RT monitoring (flange button detection)
+// RT monitoring (flange digital I/O debug)
 static std::atomic<bool>          g_rt_active{false};
 static std::atomic<unsigned char> g_prev_flange_di{0};
 static std::string                g_robot_ip;
+
+// Button monitoring via TCP monitoring_data
+static std::mutex              g_btn_mx;
+static unsigned int            g_prev_bt[NUM_BUTTON] = {};
 
 // Captured points accumulator (hand guide)
 struct CapturedStep {
@@ -154,9 +158,24 @@ static void onSafetyStopType(const unsigned char stop_type) {
     emit("[SAFETY_STOP] type=" + std::to_string((int)stop_type));
 }
 
+static std::atomic<int> g_rt_tick{0};
+
 static void onRtData(const LPRT_OUTPUT_DATA_LIST pData) {
     unsigned char cur  = pData->flange_digital_input;
     unsigned char prev = g_prev_flange_di.load();
+
+    // Log raw value every 100 ticks (~1s) so we can confirm callback fires
+    // and see what flange_digital_input reads when buttons are pressed
+    int tick = g_rt_tick.fetch_add(1);
+    if (tick % 100 == 0) {
+        char dbg[128];
+        snprintf(dbg, sizeof(dbg),
+            "[RT_DBG] tick=%d flange_di=0x%02X  b5=%d b4=%d b3=%d b2=%d b1=%d b0=%d",
+            tick, (unsigned)cur,
+            (cur>>5)&1, (cur>>4)&1, (cur>>3)&1, (cur>>2)&1, (cur>>1)&1, cur&1);
+        emit(dbg);
+    }
+
     unsigned char changed = cur ^ prev;
     if (!changed) return;
 
@@ -822,7 +841,23 @@ int main(int argc, char** argv) {
     g_robot.set_on_log_alarm(onLogAlarm);
     g_robot.set_on_tp_log(onTpLog);
     g_robot.set_on_monitoring_safety_stop_type(onSafetyStopType);
-    g_robot.set_on_monitoring_data([](const LPMONITORING_DATA) {}); // keepalive — controller drops if no cb fires for 3s
+    g_robot.set_on_monitoring_data([](const LPMONITORING_DATA pData) {
+        // keepalive — controller drops if no cb fires for 3s
+        // Also log robot button state changes (_iActualBT[5])
+        const unsigned int* bt = pData->_tMisc._iActualBT;
+        std::lock_guard<std::mutex> lk(g_btn_mx);
+        bool changed = false;
+        for (int i = 0; i < NUM_BUTTON; i++)
+            if (bt[i] != g_prev_bt[i]) { changed = true; break; }
+        if (changed) {
+            char buf[128];
+            snprintf(buf, sizeof(buf),
+                "[BTN] bt[0]=%u bt[1]=%u bt[2]=%u bt[3]=%u bt[4]=%u",
+                bt[0], bt[1], bt[2], bt[3], bt[4]);
+            emit(buf);
+            for (int i = 0; i < NUM_BUTTON; i++) g_prev_bt[i] = bt[i];
+        }
+    });
 
     // Connect
     emit("[INFO] connecting to " + ip + ":" + std::to_string(port));
