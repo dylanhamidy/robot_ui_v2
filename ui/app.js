@@ -393,6 +393,7 @@ function app() {
             type: "FreeForm",
             with_laser: s.with_laser || false,
             laser_delay: s.laser_delay ?? 0,
+            blend_radius: s.blend_radius ?? 50,
             enabled: s.enabled !== false,
             sub_steps: (s.sub_steps || []).map(ss => ({ ...ss })),
           };
@@ -614,7 +615,7 @@ function app() {
         clearTt(); clearWeld(); clearCircle();
         delete step.pos; delete step.delay; delete step.with_turntable;
         step.sub_steps = [];
-        step.with_laser = false; step.laser_delay = 0;
+        step.with_laser = false; step.laser_delay = 0; step.blend_radius = 50;
       } else {
         clearTt(); clearWeld(); clearCircle(); clearFreeForm();
         step.pos = [0, 0, 0, 0, 0, 0];
@@ -729,6 +730,7 @@ function app() {
             type: "FreeForm",
             with_laser: s.with_laser || false,
             laser_delay: Number(s.laser_delay) || 0,
+            blend_radius: Number(s.blend_radius) ?? 50,
             enabled: s.enabled !== false,
             sub_steps: (s.sub_steps || []).map(ss => {
               if (ss.type === "MoveL") {

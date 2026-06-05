@@ -320,121 +320,73 @@ static bool execStep(const json& step, int stepIdx) {
             emit("[INFO] FreeForm step " + std::to_string(stepIdx) + ": no sub-steps, skipped");
             return true;
         }
+        if (sub_steps.size() > MAX_MOVEB_POINT) {
+            emit("[ERROR] FreeForm: too many sub-steps (max " + std::to_string(MAX_MOVEB_POINT) + ")");
+            return false;
+        }
 
-        auto parseVelAcc = [](const json& ss, float vel2[2], float acc2[2]) {
-            vel2[0] = vel2[1] = 30.f;
-            acc2[0] = acc2[1] = 30.f;
-            if (ss.contains("vel")) {
-                const auto& vv = ss["vel"];
-                if (vv.is_array()) { vel2[0] = vv[0].get<float>(); vel2[1] = vv[1].get<float>(); }
-                else               vel2[0] = vel2[1] = vv.get<float>();
+        MOVE_POSB posb[MAX_MOVEB_POINT];
+        memset(posb, 0, sizeof(posb));
+
+        float vel2[2] = {30.f, 30.f}, acc2[2] = {30.f, 30.f};
+        float blend_rad = step.value("blend_radius", 50.f);
+
+        for (size_t si = 0; si < sub_steps.size(); si++) {
+            const auto& ss = sub_steps[si];
+            std::string sstype = ss.value("type", "MoveL");
+            bool is_last = (si == sub_steps.size() - 1);
+
+            // Collect vel/acc from first sub-step for the whole moveb call
+            if (si == 0) {
+                if (ss.contains("vel")) {
+                    const auto& vv = ss["vel"];
+                    if (vv.is_array()) { vel2[0] = vv[0].get<float>(); vel2[1] = vv[1].get<float>(); }
+                    else               vel2[0] = vel2[1] = vv.get<float>();
+                }
+                if (ss.contains("acc")) {
+                    const auto& aa = ss["acc"];
+                    if (aa.is_array()) { acc2[0] = aa[0].get<float>(); acc2[1] = aa[1].get<float>(); }
+                    else               acc2[0] = acc2[1] = aa.get<float>();
+                }
             }
-            if (ss.contains("acc")) {
-                const auto& aa = ss["acc"];
-                if (aa.is_array()) { acc2[0] = aa[0].get<float>(); acc2[1] = aa[1].get<float>(); }
-                else               acc2[0] = acc2[1] = aa.get<float>();
-            }
-        };
 
-        auto parse6 = [](const json& j, float out[6]) {
-            for (int k = 0; k < 6; k++) out[k] = j[k].get<float>();
-        };
-
-        // dispatch one sub-step; as_async=false → movel/movec (starts motion from STANDBY)
-        //                         as_async=true  → amovel/amovec (appends to running queue)
-        auto dispatchSS = [&](const json& ss, size_t si, bool as_async) -> bool {
-            std::string sst = ss.value("type", "MoveL");
-            float vel2[2], acc2[2];
-            parseVelAcc(ss, vel2, acc2);
-            float t = ss.value("time", 0.f);
-
-            if (sst == "MoveL") {
+            if (sstype == "MoveL") {
                 auto arr = ss.value("pos", json::array());
                 if (arr.size() < 6) {
                     emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " MoveL: missing pos[6]");
                     return false;
                 }
-                float pos[NUM_TASK];
-                for (int k = 0; k < NUM_TASK; k++) pos[k] = arr[k].get<float>();
-                bool ok = as_async
-                    ? g_robot.amovel(pos, vel2, acc2, t, MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, BLENDING_SPEED_TYPE_DUPLICATE)
-                    : g_robot.movel(pos, vel2, acc2, t, MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, 0.f, BLENDING_SPEED_TYPE_DUPLICATE);
-                if (!ok) {
-                    emit("[ERROR] FreeForm sub-step " + std::to_string(si) + (as_async ? " amovel" : " movel") + " returned false");
-                    return false;
-                }
+                for (int k = 0; k < NUM_TASK; k++) posb[si]._fTargetPos[0][k] = arr[k].get<float>();
+                posb[si]._iBlendType = 0;  // line
+                posb[si]._fBlendRad  = is_last ? 0.f : blend_rad;
 
-            } else if (sst == "MoveC") {
+            } else if (sstype == "MoveC") {
                 if (!ss.contains("pos_via") || ss["pos_via"].is_null() ||
                     !ss.contains("pos_end") || ss["pos_end"].is_null()) {
                     emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " MoveC: missing pos_via/pos_end");
                     return false;
                 }
-                float pos_via[6], pos_end[6];
-                parse6(ss["pos_via"], pos_via);
-                parse6(ss["pos_end"], pos_end);
-                float a2 = ss.value("angle2", 0.f);
-                float arc[2][NUM_TASK];
-                for (int k = 0; k < NUM_TASK; k++) arc[0][k] = pos_via[k];
-                for (int k = 0; k < NUM_TASK; k++) arc[1][k] = pos_end[k];
-                bool ok = as_async
-                    ? g_robot.amovec(arc, vel2, acc2, t, MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, a2, 0.f)
-                    : g_robot.movec(arc, vel2, acc2, t, MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, a2, 0.f);
-                if (!ok) {
-                    emit("[ERROR] FreeForm sub-step " + std::to_string(si) + (as_async ? " amovec" : " movec") + " returned false");
-                    return false;
-                }
+                for (int k = 0; k < NUM_TASK; k++) posb[si]._fTargetPos[0][k] = ss["pos_via"][k].get<float>();
+                for (int k = 0; k < NUM_TASK; k++) posb[si]._fTargetPos[1][k] = ss["pos_end"][k].get<float>();
+                posb[si]._iBlendType = 1;  // circle
+                posb[si]._fBlendRad  = is_last ? 0.f : blend_rad;
+            } else {
+                emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " unknown type: " + sstype);
+                return false;
             }
-            return true;
-        };
+        }
 
         emit("[STEP_START] " + std::to_string(stepIdx));
 
-        // First sub-step: sync dispatch (starts motion from STANDBY)
-        if (!dispatchSS(sub_steps[0], 0, false)) return false;
-
-        if (sub_steps.size() == 1) {
-            if (!waitForStandby()) {
-                emit("[ERROR] FreeForm sub-step 0 waitForStandby failed");
-                return false;
-            }
-        } else {
-            // Wait for robot to enter STATE_MOVING — confirms first move accepted
-            {
-                std::unique_lock<std::mutex> lk(g_state_mx);
-                g_state_cv.wait_for(lk, std::chrono::seconds(5), [] {
-                    return g_robot_state == STATE_MOVING || g_cancel.load() || g_shutdown.load();
-                });
-            }
-            if (g_cancel || g_shutdown) return false;
-
-            // Append remaining sub-steps while robot is moving
-            for (size_t si = 1; si < sub_steps.size(); si++) {
-                if (g_cancel || g_shutdown) return false;
-
-                bool still_moving;
-                {
-                    std::lock_guard<std::mutex> lk(g_state_mx);
-                    still_moving = (g_robot_state == STATE_MOVING);
-                }
-
-                // Dispatch async if still moving, else fall back to sync + wait
-                if (!dispatchSS(sub_steps[si], si, still_moving)) return false;
-                if (!still_moving) {
-                    // First move finished before we could queue — sync fallback for this sub-step
-                    if (!waitForStandby()) {
-                        emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " waitForStandby failed");
-                        return false;
-                    }
-                    // Next sub-step will also fall back (robot is STANDBY again)
-                }
-            }
-
-            // Wait for all remaining async-queued moves to complete
-            if (!waitForStandby(120000)) {
-                emit("[ERROR] FreeForm final waitForStandby failed");
-                return false;
-            }
+        bool ok = g_robot.moveb(posb, (unsigned char)sub_steps.size(), vel2, acc2, 0.f,
+                                MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE);
+        if (!ok) {
+            emit("[ERROR] FreeForm moveb returned false");
+            return false;
+        }
+        if (!waitForStandby(120000)) {
+            emit("[ERROR] FreeForm moveb waitForStandby failed");
+            return false;
         }
 
         emit("[INFO] FreeForm step " + std::to_string(stepIdx) + " complete");
