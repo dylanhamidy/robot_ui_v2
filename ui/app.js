@@ -74,6 +74,20 @@ function app() {
     handGuideLoading: false,
     captureType: "MoveJ",
 
+    // Jog
+    jogReference: 0,
+    jogVelocity: 20,
+    jogActiveAxis: null,
+    jogError: "",
+    jogJointAxes: [
+      {axis:0,label:"J1"},{axis:1,label:"J2"},{axis:2,label:"J3"},
+      {axis:3,label:"J4"},{axis:4,label:"J5"},{axis:5,label:"J6"},
+    ],
+    jogTaskAxes: [
+      {axis:6,label:"X"},{axis:7,label:"Y"},{axis:8,label:"Z"},
+      {axis:9,label:"RX"},{axis:10,label:"RY"},{axis:11,label:"RZ"},
+    ],
+
     ws: null,
 
     async init() {
@@ -82,6 +96,8 @@ function app() {
       this.pollStatus();
       this.pollTurntableStatus();
       this.connectWS();
+      this.$watch("currentPage", (val, old) => { if (old === "jog") this.jogStop(); });
+      this.$watch("planMode",    (val, old) => { if (old === "jog") this.jogStop(); });
     },
 
     toggleDark() {
@@ -166,6 +182,7 @@ function app() {
             this.connected = false;
             this.handGuideEnabled = false;
             this.handGuideLoading = false;
+            this.jogStop();
             this.resetSetup();
           }
         }
@@ -290,8 +307,14 @@ function app() {
       this.$nextTick(() => this.initSortable());
     },
 
-    switchToHandGuide() {
+    async switchToHandGuide() {
+      await this.jogStop();
       this.planMode = "handguide";
+    },
+
+    async switchToJog() {
+      if (this.handGuideEnabled) await this.disableHandGuide();
+      this.planMode = "jog";
     },
 
     _resetModalTt() {
@@ -567,6 +590,7 @@ function app() {
       this.planModalError = "";
       this.modalDirty = false;
       this.showUnsavedWarning = false;
+      await this.jogStop();
       if (this.handGuideEnabled) await this.disableHandGuide();
       await this._cleanupModalTurntable();
       this.selectedStepIndex = null;
@@ -575,6 +599,7 @@ function app() {
     },
 
     async closePlanModal() {
+      await this.jogStop();
       if (this.handGuideEnabled) await this.disableHandGuide();
       if (this.modalTtActivated && this.ttEnabled) {
         this.showTtRunningWarning = true;
@@ -597,6 +622,7 @@ function app() {
     },
 
     async closeTtWarningDiscard() {
+      await this.jogStop();
       this.showTtRunningWarning = false;
       this.modalDirty = false;
       this.showUnsavedWarning = false;
@@ -611,6 +637,7 @@ function app() {
     },
 
     async confirmDiscard() {
+      await this.jogStop();
       if (this.handGuideEnabled) this.disableHandGuide();
       fetch("/api/robot/hand_guide/points", { method: "DELETE" });
       await this._cleanupModalTurntable();
@@ -758,6 +785,35 @@ function app() {
       this.modalDirty = false;
       this.showUnsavedWarning = false;
       this.handGuideLoading = false;
+    },
+
+    // ── Jog ───────────────────────────────────────────────────────────────────
+
+    async jogStart(axis, sign) {
+      if (!this.connected || this.running) return;
+      this.jogActiveAxis = axis;
+      this.jogError = "";
+      try {
+        const r = await fetch("/api/robot/jog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ axis, reference: this.jogReference, velocity: sign * this.jogVelocity }),
+        });
+        if (!r.ok) this.jogError = (await r.json()).detail;
+      } catch (_) { this.jogError = "Request failed"; }
+    },
+
+    async jogStop() {
+      if (this.jogActiveAxis === null) return;
+      const axis = this.jogActiveAxis;
+      this.jogActiveAxis = null;
+      try {
+        await fetch("/api/robot/jog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ axis, reference: this.jogReference, velocity: 0 }),
+        });
+      } catch (_) {}
     },
 
     // ── Turntable ─────────────────────────────────────────────────────────────

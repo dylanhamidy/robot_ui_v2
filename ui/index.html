@@ -197,6 +197,12 @@
               :class="currentPage === 'turntable' ? 'bg-surface-raised text-gray-900 shadow-sm' : 'text-dim hover:text-gray-700'">
         Turntable Control
       </button>
+      <button @click="currentPage = 'jog'"
+              role="tab" :aria-selected="currentPage === 'jog'"
+              class="focus-ring px-4 py-1.5 text-xs font-medium rounded-md transition-all duration-150"
+              :class="currentPage === 'jog' ? 'bg-surface-raised text-gray-900 shadow-sm' : 'text-dim hover:text-gray-700'">
+        Jog Control
+      </button>
     </div>
 
     <div class="flex items-center gap-3 flex-1 justify-end">
@@ -508,6 +514,125 @@
     </div>
   </div>
 
+  <!-- Jog page -->
+  <div x-show="currentPage === 'jog'" x-cloak class="flex-1 overflow-auto bg-surface-base">
+    <div class="max-w-lg mx-auto px-6 py-8 space-y-8">
+
+      <!-- Not connected notice -->
+      <div x-show="!connected || running"
+           class="rounded-lg px-4 py-3 text-sm font-medium border"
+           :class="running
+             ? 'bg-amber-50 border-amber-200 text-amber-700 dark:bg-amber-900/20 dark:border-amber-700/50 dark:text-amber-300'
+             : 'bg-surface-input border-chrome text-dim'">
+        <span x-text="running ? 'Stop the running plan before jogging.' : 'Connect to the robot first (Setup → Connect).'"></span>
+      </div>
+
+      <div :class="(!connected || running) ? 'opacity-40 pointer-events-none' : ''">
+
+        <!-- Reference + Velocity -->
+        <div class="flex items-start gap-6 mb-8">
+          <div>
+            <div class="text-[11px] font-medium text-dim mb-2">Reference Frame</div>
+            <div class="flex rounded-lg overflow-hidden border border-chrome-input" role="group" aria-label="Reference frame">
+              <button @click="jogReference = 0" class="focus-ring px-4 py-1.5 text-xs font-semibold transition-colors duration-150"
+                      :class="jogReference === 0 ? 'bg-accent-ui text-white' : 'bg-surface-raised text-gray-700 hover:bg-btn'">Base</button>
+              <button @click="jogReference = 1" class="focus-ring px-4 py-1.5 text-xs font-semibold border-l border-chrome-input transition-colors duration-150"
+                      :class="jogReference === 1 ? 'bg-accent-ui text-white' : 'bg-surface-raised text-gray-700 hover:bg-btn'">Tool</button>
+              <button @click="jogReference = 2" class="focus-ring px-4 py-1.5 text-xs font-semibold border-l border-chrome-input transition-colors duration-150"
+                      :class="jogReference === 2 ? 'bg-accent-ui text-white' : 'bg-surface-raised text-gray-700 hover:bg-btn'">World</button>
+            </div>
+          </div>
+          <div class="flex-1">
+            <div class="flex items-baseline justify-between mb-2">
+              <div class="text-[11px] font-medium text-dim">Velocity</div>
+              <div class="flex items-baseline gap-1">
+                <span x-text="jogVelocity" class="font-mono text-sm text-gray-700"></span>
+                <span class="text-xs text-dim">%</span>
+              </div>
+            </div>
+            <input type="range" min="1" max="50" x-model.number="jogVelocity"
+                   class="w-full" style="accent-color: var(--btn-primary)" aria-label="Jog velocity" />
+            <div class="flex justify-between text-[10px] text-dim mt-1 px-0.5 select-none">
+              <span>Slow</span><span>50% max</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Joint Space -->
+        <div class="mb-6">
+          <div class="text-[11px] font-semibold uppercase tracking-widest text-dim mb-3">Joint Space</div>
+          <div class="grid grid-cols-3 gap-2.5">
+            <template x-for="a in jogJointAxes" :key="a.axis">
+              <div class="rounded-lg border border-chrome bg-surface-raised p-2.5">
+                <div class="text-[11px] font-semibold text-gray-500 mb-2 text-center select-none" x-text="a.label"></div>
+                <div class="flex gap-1.5">
+                  <button class="focus-ring flex-1 h-9 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
+                          :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                          @mousedown.prevent="jogStart(a.axis, -1)"
+                          @mouseup="jogStop()"
+                          @mouseleave="jogStop()"
+                          @touchstart.prevent="jogStart(a.axis, -1)"
+                          @touchend.prevent="jogStop()"
+                          @touchcancel.prevent="jogStop()"
+                          :aria-label="'Jog ' + a.label + ' negative'">−</button>
+                  <button class="focus-ring flex-1 h-9 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
+                          :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                          @mousedown.prevent="jogStart(a.axis, 1)"
+                          @mouseup="jogStop()"
+                          @mouseleave="jogStop()"
+                          @touchstart.prevent="jogStart(a.axis, 1)"
+                          @touchend.prevent="jogStop()"
+                          @touchcancel.prevent="jogStop()"
+                          :aria-label="'Jog ' + a.label + ' positive'">+</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Task Space -->
+        <div>
+          <div class="text-[11px] font-semibold uppercase tracking-widest text-dim mb-3">Task Space</div>
+          <div class="grid grid-cols-3 gap-2.5">
+            <template x-for="a in jogTaskAxes" :key="a.axis">
+              <div class="rounded-lg border border-chrome bg-surface-raised p-2.5">
+                <div class="text-[11px] font-semibold text-gray-500 mb-2 text-center select-none" x-text="a.label"></div>
+                <div class="flex gap-1.5">
+                  <button class="focus-ring flex-1 h-9 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
+                          :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                          @mousedown.prevent="jogStart(a.axis, -1)"
+                          @mouseup="jogStop()"
+                          @mouseleave="jogStop()"
+                          @touchstart.prevent="jogStart(a.axis, -1)"
+                          @touchend.prevent="jogStop()"
+                          @touchcancel.prevent="jogStop()"
+                          :aria-label="'Jog ' + a.label + ' negative'">−</button>
+                  <button class="focus-ring flex-1 h-9 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
+                          :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                          @mousedown.prevent="jogStart(a.axis, 1)"
+                          @mouseup="jogStop()"
+                          @mouseleave="jogStop()"
+                          @touchstart.prevent="jogStart(a.axis, 1)"
+                          @touchend.prevent="jogStop()"
+                          @touchcancel.prevent="jogStop()"
+                          :aria-label="'Jog ' + a.label + ' positive'">+</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Error -->
+        <div x-show="jogError"
+             class="mt-6 flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+          <span aria-hidden="true" class="flex-shrink-0">⚠</span>
+          <span x-text="jogError"></span>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
   <!-- Footer: Start/Stop (robot page only) -->
   <footer x-show="currentPage === 'robot'" class="pr-5 py-3 bg-surface-raised shadow-footer flex items-center flex-shrink-0 relative z-10">
     <div class="w-64 flex items-center gap-3 px-5 flex-shrink-0">
@@ -647,7 +772,7 @@
       <!-- Mode tabs (only when connected) + Plan name — always outside tab bodies -->
       <div class="px-5 pt-5 space-y-4">
         <div class="flex gap-1 p-1 bg-surface-input border border-chrome rounded-lg w-fit">
-          <button @click="planMode = 'manual'"
+          <button @click="jogStop(); planMode = 'manual'"
                   class="focus-ring px-4 py-1.5 text-xs font-medium rounded-md transition-all duration-150"
                   :class="planMode === 'manual' ? 'bg-surface-raised text-gray-900 shadow-sm' : 'text-dim hover:text-gray-700'">
             Manual Steps
@@ -657,10 +782,15 @@
                   :class="planMode === 'handguide' ? 'bg-surface-raised text-gray-900 shadow-sm' : 'text-dim hover:text-gray-700'">
             Hand Guide
           </button>
-          <button @click="planMode = 'turntable'"
+          <button @click="jogStop(); planMode = 'turntable'"
                   class="focus-ring px-4 py-1.5 text-xs font-medium rounded-md transition-all duration-150"
                   :class="planMode === 'turntable' ? 'bg-surface-raised text-gray-900 shadow-sm' : 'text-dim hover:text-gray-700'">
             Turntable
+          </button>
+          <button x-show="connected" @click="switchToJog()"
+                  class="focus-ring px-4 py-1.5 text-xs font-medium rounded-md transition-all duration-150"
+                  :class="planMode === 'jog' ? 'bg-surface-raised text-gray-900 shadow-sm' : 'text-dim hover:text-gray-700'">
+            Jog
           </button>
         </div>
 
@@ -853,6 +983,141 @@
           </div>
         </div>
 
+        <!-- Jog controls (only in jog mode) -->
+        <div x-show="planMode === 'jog'"
+             class="rounded-lg border border-chrome bg-surface-input p-4 space-y-5">
+          <p class="text-xs text-dim leading-relaxed">Hold a button to jog the arm. Release to stop. Then tap <strong class="text-gray-700 font-medium">Record Point</strong> to capture the position.</p>
+
+          <!-- Reference + Velocity -->
+          <div class="flex items-start gap-4">
+            <div>
+              <div class="text-[11px] font-medium text-dim mb-2">Reference Frame</div>
+              <div class="flex rounded-lg overflow-hidden border border-chrome-input" role="group" aria-label="Reference frame">
+                <button @click="jogReference = 0" class="focus-ring px-3 py-1.5 text-xs font-semibold transition-colors duration-150"
+                        :class="jogReference === 0 ? 'bg-accent-ui text-white' : 'bg-surface-raised text-gray-700 hover:bg-btn'">Base</button>
+                <button @click="jogReference = 1" class="focus-ring px-3 py-1.5 text-xs font-semibold border-l border-chrome-input transition-colors duration-150"
+                        :class="jogReference === 1 ? 'bg-accent-ui text-white' : 'bg-surface-raised text-gray-700 hover:bg-btn'">Tool</button>
+                <button @click="jogReference = 2" class="focus-ring px-3 py-1.5 text-xs font-semibold border-l border-chrome-input transition-colors duration-150"
+                        :class="jogReference === 2 ? 'bg-accent-ui text-white' : 'bg-surface-raised text-gray-700 hover:bg-btn'">World</button>
+              </div>
+            </div>
+            <div class="flex-1">
+              <div class="flex items-baseline justify-between mb-2">
+                <div class="text-[11px] font-medium text-dim">Velocity</div>
+                <div class="flex items-baseline gap-1">
+                  <span x-text="jogVelocity" class="font-mono text-sm text-gray-700"></span>
+                  <span class="text-xs text-dim">%</span>
+                </div>
+              </div>
+              <input type="range" min="1" max="50" x-model.number="jogVelocity"
+                     class="w-full" style="accent-color: var(--btn-primary)" aria-label="Jog velocity" />
+            </div>
+          </div>
+
+          <!-- Joint Space -->
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-widest text-dim mb-2">Joint Space</div>
+            <div class="grid grid-cols-3 gap-2">
+              <template x-for="a in jogJointAxes" :key="a.axis">
+                <div class="rounded-lg border border-chrome bg-surface-raised p-2">
+                  <div class="text-[11px] font-semibold text-gray-500 mb-1.5 text-center select-none" x-text="a.label"></div>
+                  <div class="flex gap-1">
+                    <button class="focus-ring flex-1 h-8 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
+                            :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                            @mousedown.prevent="jogStart(a.axis, -1)"
+                            @mouseup="jogStop()"
+                            @mouseleave="jogStop()"
+                            @touchstart.prevent="jogStart(a.axis, -1)"
+                            @touchend.prevent="jogStop()"
+                            @touchcancel.prevent="jogStop()"
+                            :aria-label="'Jog ' + a.label + ' negative'">−</button>
+                    <button class="focus-ring flex-1 h-8 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
+                            :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                            @mousedown.prevent="jogStart(a.axis, 1)"
+                            @mouseup="jogStop()"
+                            @mouseleave="jogStop()"
+                            @touchstart.prevent="jogStart(a.axis, 1)"
+                            @touchend.prevent="jogStop()"
+                            @touchcancel.prevent="jogStop()"
+                            :aria-label="'Jog ' + a.label + ' positive'">+</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Task Space -->
+          <div>
+            <div class="text-[11px] font-semibold uppercase tracking-widest text-dim mb-2">Task Space</div>
+            <div class="grid grid-cols-3 gap-2">
+              <template x-for="a in jogTaskAxes" :key="a.axis">
+                <div class="rounded-lg border border-chrome bg-surface-raised p-2">
+                  <div class="text-[11px] font-semibold text-gray-500 mb-1.5 text-center select-none" x-text="a.label"></div>
+                  <div class="flex gap-1">
+                    <button class="focus-ring flex-1 h-8 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
+                            :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                            @mousedown.prevent="jogStart(a.axis, -1)"
+                            @mouseup="jogStop()"
+                            @mouseleave="jogStop()"
+                            @touchstart.prevent="jogStart(a.axis, -1)"
+                            @touchend.prevent="jogStop()"
+                            @touchcancel.prevent="jogStop()"
+                            :aria-label="'Jog ' + a.label + ' negative'">−</button>
+                    <button class="focus-ring flex-1 h-8 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
+                            :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                            @mousedown.prevent="jogStart(a.axis, 1)"
+                            @mouseup="jogStop()"
+                            @mouseleave="jogStop()"
+                            @touchstart.prevent="jogStart(a.axis, 1)"
+                            @touchend.prevent="jogStop()"
+                            @touchcancel.prevent="jogStop()"
+                            :aria-label="'Jog ' + a.label + ' positive'">+</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- Move type + Record -->
+          <div class="border-t border-chrome pt-4 space-y-3">
+            <div class="flex items-center gap-3">
+              <span class="text-[11px] text-dim flex-shrink-0">Move type</span>
+              <div class="flex rounded-lg overflow-hidden border border-chrome-input">
+                <button @click="setMoveType('MoveJ')"
+                        class="focus-ring px-5 py-2 text-xs font-medium transition-colors duration-150"
+                        :class="captureType === 'MoveJ' ? 'bg-accent-ui text-white' : 'bg-surface-raised text-gray-700 hover:bg-btn'">
+                  MoveJ
+                </button>
+                <button @click="setMoveType('MoveL')"
+                        class="focus-ring px-5 py-2 text-xs font-medium transition-colors duration-150"
+                        :class="captureType === 'MoveL' ? 'bg-accent-ui text-white' : 'bg-surface-raised text-gray-700 hover:bg-btn'">
+                  MoveL
+                </button>
+              </div>
+            </div>
+            <div class="flex gap-2">
+              <button @click="recordPoint()" :disabled="handGuideLoading"
+                      class="focus-ring flex-1 py-3 text-sm font-semibold rounded-lg transition-colors duration-150"
+                      :class="handGuideLoading ? 'opacity-50 cursor-not-allowed bg-green-600 text-white' : 'bg-green-600 hover:bg-green-700 text-white'">
+                <span aria-hidden="true" class="mr-1">●</span>
+                <span x-text="selectedStepIndex !== null ? 'Update Step ' + (selectedStepIndex + 1) : 'Record Point'"></span>
+              </button>
+              <button @click="clearCapture()" :disabled="handGuideLoading"
+                      class="focus-ring px-4 py-3 text-xs font-medium rounded-lg border border-chrome-input transition-colors duration-150"
+                      :class="handGuideLoading ? 'opacity-50 cursor-not-allowed bg-surface-raised text-gray-400' : 'bg-surface-raised hover:bg-btn text-gray-700'">
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <!-- Error -->
+          <div x-show="jogError"
+               class="flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
+            <span aria-hidden="true" class="flex-shrink-0">⚠</span>
+            <span x-text="jogError"></span>
+          </div>
+        </div>
+
         <!-- Mode notice -->
         <div x-show="modalTtParallel"
              class="flex items-center gap-2 px-3 py-2 rounded-lg bg-teal-50 border border-teal-200 text-xs text-teal-700 dark:bg-teal-900/20 dark:border-teal-700/50 dark:text-teal-400">
@@ -875,14 +1140,14 @@
           </div>
 
           <div x-show="modalSteps.length === 0" class="text-xs text-dim text-center py-6 border border-dashed border-chrome rounded-lg">
-            <span x-text="planMode === 'handguide' ? 'No points recorded yet — enable hand guide and record.' : planMode === 'turntable' ? 'No steps yet — configure turntable above and click + Add Turntable Step.' : 'No steps yet — click + Add Step.'"></span>
+            <span x-text="planMode === 'handguide' ? 'No points recorded yet — enable hand guide and record.' : planMode === 'jog' ? 'No points recorded yet — jog to position and record.' : planMode === 'turntable' ? 'No steps yet — configure turntable above and click + Add Turntable Step.' : 'No steps yet — click + Add Step.'"></span>
           </div>
 
           <div class="space-y-2" x-ref="stepsContainer">
             <template x-for="(step, i) in modalSteps" :key="i">
               <div class="step-row border rounded-lg p-3 transition-colors duration-150"
                    :class="[
-                     selectedStepIndex === i && planMode === 'handguide' && handGuideEnabled
+                     selectedStepIndex === i && (planMode === 'jog' || (planMode === 'handguide' && handGuideEnabled))
                        ? 'bg-indigo-50 border-indigo-300 ring-2 ring-indigo-200'
                        : 'bg-gray-50 border-chrome',
                      step.enabled === false ? 'opacity-50' : ''
@@ -896,7 +1161,7 @@
                     <option>MoveL</option>
                     <option x-show="!modalTtParallel">Turntable</option>
                   </select>
-                  <button x-show="planMode === 'handguide' && handGuideEnabled"
+                  <button x-show="(planMode === 'handguide' && handGuideEnabled) || planMode === 'jog'"
                           @click="selectStep(i)"
                           :class="selectedStepIndex === i ? 'text-indigo-700 bg-indigo-50 border-indigo-300' : 'text-gray-500 hover:text-gray-700 bg-btn border-chrome-input'"
                           :aria-label="selectedStepIndex === i ? 'Deselect step ' + (i + 1) : 'Select step ' + (i + 1) + ' for recording'"

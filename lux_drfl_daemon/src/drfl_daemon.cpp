@@ -591,12 +591,26 @@ static void cmdClose() {
     g_shutdown = true;
 }
 
+static void cmdJog(const json& cmd) {
+    int   axis_int = cmd.value("axis", -1);
+    int   ref_int  = cmd.value("reference", 0);
+    float vel      = cmd.value("velocity", 0.0f);
+    if (axis_int < 0 || axis_int > 11) {
+        emit("[ERROR] jog: axis must be 0-11");
+        return;
+    }
+    g_robot.jog(static_cast<JOG_AXIS>(axis_int),
+                static_cast<MOVE_REFERENCE>(ref_int),
+                vel);
+}
+
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 static void dispatch(const json& cmd) {
     std::string c = cmd.value("cmd", "");
     if      (c == "run_plan")           cmdRunPlan(cmd);
     else if (c == "stop")               cmdStop();
+    else if (c == "jog")                cmdJog(cmd);
     else if (c == "record_point")       cmdRecordPoint();
     else if (c == "clear_plan")         cmdClearPlan();
     else if (c == "save_plan")          cmdSavePlan();

@@ -719,6 +719,23 @@ async def hand_guide_type(body: HandGuideTypeBody):
     ok = await _drfl_send({"cmd": "set_param", "key": "current_type", "value": body.move_type})
     return {"ok": ok}
 
+class JogBody(BaseModel):
+    axis: int
+    reference: int = 0
+    velocity: float
+
+@app.post("/api/robot/jog")
+async def robot_jog(body: JogBody):
+    if not _connected:
+        raise HTTPException(409, "Not connected")
+    if _active_plan is not None:
+        raise HTTPException(409, "A plan is running")
+    if not (0 <= body.axis <= 11):
+        raise HTTPException(400, "axis must be 0-11")
+    ok = await _drfl_send({"cmd": "jog", "axis": body.axis,
+                           "reference": body.reference, "velocity": body.velocity})
+    return {"ok": ok}
+
 # ── turntable control ──────────────────────────────────────────────────────
 
 class TurntableConnectBody(BaseModel):

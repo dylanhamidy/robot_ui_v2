@@ -41,9 +41,16 @@ ENV_FLAGS=""
 [ -n "${ROBOT_IP}" ] && ENV_FLAGS="$ENV_FLAGS -e ROBOT_IP=${ROBOT_IP}"
 [ -n "${PC_IP}" ]    && ENV_FLAGS="$ENV_FLAGS -e PC_IP=${PC_IP}"
 
+# --net=host works on Linux only; Windows Docker Desktop requires port mapping
+if [[ "$(uname -s)" == "Linux" ]] && ! grep -qi microsoft /proc/version 2>/dev/null; then
+    NET_FLAGS="--net=host"
+else
+    NET_FLAGS="-p 8000:8000"
+fi
+
 docker run -d \
     --name robot_ui \
-    --net=host \
+    $NET_FLAGS \
     --cap-add=NET_ADMIN \
     -v "${DATA_DIR}/plans":/app/plans \
     -v "${DATA_DIR}/stats":/app/stats \
