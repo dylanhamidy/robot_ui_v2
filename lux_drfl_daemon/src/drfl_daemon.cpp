@@ -89,11 +89,29 @@ static std::string             g_plan_name;  // set by save_plan / set_param
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 
+static const char* robotStateName(ROBOT_STATE s) {
+    switch (s) {
+        case STATE_INITIALIZING: return "INITIALIZING";
+        case STATE_STANDBY:      return "STANDBY";
+        case STATE_MOVING:       return "MOVING";
+        case STATE_SAFE_OFF:     return "SAFE_OFF";
+        case STATE_TEACHING:     return "TEACHING";
+        case STATE_SAFE_STOP:    return "SAFE_STOP";
+        case STATE_EMERGENCY_STOP: return "EMERGENCY_STOP";
+        case STATE_HOMMING:      return "HOMMING";
+        case STATE_RECOVERY:     return "RECOVERY";
+        case STATE_RACK_ERROR:   return "RACK_ERROR";
+        case STATE_FATAL_ERROR:  return "FATAL_ERROR";
+        default:                 return "UNKNOWN";
+    }
+}
+
 static void onState(const ROBOT_STATE state) {
     {
         std::lock_guard<std::mutex> lk(g_state_mx);
         g_robot_state = state;
     }
+    emit(std::string("[STATE] ") + robotStateName(state));
     g_state_cv.notify_all();
 }
 
