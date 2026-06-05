@@ -100,8 +100,6 @@ static const char* robotStateName(ROBOT_STATE s) {
         case STATE_EMERGENCY_STOP: return "EMERGENCY_STOP";
         case STATE_HOMMING:      return "HOMMING";
         case STATE_RECOVERY:     return "RECOVERY";
-        case STATE_RACK_ERROR:   return "RACK_ERROR";
-        case STATE_FATAL_ERROR:  return "FATAL_ERROR";
         default:                 return "UNKNOWN";
     }
 }
@@ -141,6 +139,14 @@ static void onLogAlarm(LPLOG_ALARM tLog) {
                       " param=[" + tLog->_szParam[0] + "," +
                       tLog->_szParam[1] + "," + tLog->_szParam[2] + "]";
     emit(msg);
+}
+
+static void onTpLog(const char msg[256]) {
+    emit(std::string("[TP] ") + msg);
+}
+
+static void onSafetyStopType(const unsigned char stop_type) {
+    emit("[SAFETY_STOP] type=" + std::to_string((int)stop_type));
 }
 
 static void onDisconnected() {
@@ -668,6 +674,8 @@ int main(int argc, char** argv) {
     g_robot.set_on_monitoring_access_control(onAccessControl);
     g_robot.set_on_disconnected(onDisconnected);
     g_robot.set_on_log_alarm(onLogAlarm);
+    g_robot.set_on_tp_log(onTpLog);
+    g_robot.set_on_monitoring_safety_stop_type(onSafetyStopType);
 
     // Connect
     emit("[INFO] connecting to " + ip + ":" + std::to_string(port));
