@@ -74,14 +74,10 @@ static float        g_default_vel{30.0f};
 static float        g_default_acc{30.0f};
 static float        g_default_time{0.0f};
 
-// RT monitoring (flange digital I/O debug)
-static std::atomic<bool>          g_rt_active{false};
-static std::atomic<unsigned char> g_prev_flange_di{0};
-static std::string                g_robot_ip;
-
-// Button monitoring via TCP monitoring_data
+// Flange button monitoring
 static std::mutex              g_btn_mx;
 static unsigned int            g_prev_bt[NUM_BUTTON] = {};
+static std::atomic<bool>       g_hand_guide_active{false};
 
 // Captured points accumulator (hand guide)
 struct CapturedStep {
@@ -156,38 +152,6 @@ static void onTpLog(const char msg[256]) {
 
 static void onSafetyStopType(const unsigned char stop_type) {
     emit("[SAFETY_STOP] type=" + std::to_string((int)stop_type));
-}
-
-static std::atomic<int> g_rt_tick{0};
-
-static void onRtData(const LPRT_OUTPUT_DATA_LIST pData) {
-    unsigned char cur  = pData->flange_digital_input;
-    unsigned char prev = g_prev_flange_di.load();
-
-    // Log raw value every 100 ticks (~1s) so we can confirm callback fires
-    // and see what flange_digital_input reads when buttons are pressed
-    int tick = g_rt_tick.fetch_add(1);
-    if (tick % 100 == 0) {
-        char dbg[128];
-        snprintf(dbg, sizeof(dbg),
-            "[RT_DBG] tick=%d flange_di=0x%02X  b5=%d b4=%d b3=%d b2=%d b1=%d b0=%d",
-            tick, (unsigned)cur,
-            (cur>>5)&1, (cur>>4)&1, (cur>>3)&1, (cur>>2)&1, (cur>>1)&1, cur&1);
-        emit(dbg);
-    }
-
-    unsigned char changed = cur ^ prev;
-    if (!changed) return;
-
-    unsigned char rising  = changed & cur;
-    unsigned char falling = changed & (~cur);
-    char buf[160];
-    snprintf(buf, sizeof(buf),
-        "[FLANGE_BTN] raw=0x%02X rising=0x%02X falling=0x%02X  b5=%d b4=%d b3=%d b2=%d b1=%d b0=%d",
-        (unsigned)cur, (unsigned)rising, (unsigned)falling,
-        (cur>>5)&1, (cur>>4)&1, (cur>>3)&1, (cur>>2)&1, (cur>>1)&1, cur&1);
-    emit(buf);
-    g_prev_flange_di.store(cur);
 }
 
 static void onDisconnected() {
@@ -678,45 +642,16 @@ static void cmdEnableHandGuide() {
     g_robot.set_robot_mode(ROBOT_MODE_MANUAL);
     float stx[NUM_TASK] = {3000.0f, 3000.0f, 3000.0f, 200.0f, 200.0f, 200.0f};
     g_robot.task_compliance_ctrl(stx, COORDINATE_SYSTEM_TOOL, 0.0f);
-
-    if (!g_rt_active.load()) {
-        bool conn = g_robot.connect_rt_control(g_robot_ip, 12347);
-        if (conn) {
-            std::string versions = g_robot.get_rt_control_output_version_list();
-            emit("[INFO] RT output versions: " + versions);
-            std::string ver = "v1.0";
-            if (!versions.empty()) {
-                auto comma = versions.find(',');
-                ver = (comma != std::string::npos) ? versions.substr(0, comma) : versions;
-                while (!ver.empty() && ver.front() == ' ') ver.erase(0, 1);
-                while (!ver.empty() && ver.back()  == ' ') ver.pop_back();
-            }
-            emit("[INFO] RT using version: " + ver);
-            g_robot.set_rt_control_output(ver, 0.01f, 4);
-            g_prev_flange_di.store(0);
-            g_robot.set_on_rt_monitoring_data(onRtData);
-            if (g_robot.start_rt_control()) {
-                g_rt_active.store(true);
-                emit("[INFO] RT flange button monitoring active — press each button to identify bits");
-            } else {
-                emit("[INFO] RT start_rt_control failed — flange button monitoring unavailable");
-                g_robot.disconnect_rt_control();
-            }
-        } else {
-            emit("[INFO] RT connect_rt_control failed — flange button monitoring unavailable");
-        }
+    {
+        std::lock_guard<std::mutex> lk(g_btn_mx);
+        for (int i = 0; i < NUM_BUTTON; i++) g_prev_bt[i] = 0;
     }
-
+    g_hand_guide_active.store(true);
     emit("[INFO] hand guide enabled");
 }
 
 static void cmdDisableHandGuide() {
-    if (g_rt_active.load()) {
-        g_robot.stop_rt_control();
-        g_robot.disconnect_rt_control();
-        g_rt_active.store(false);
-        emit("[INFO] RT flange button monitoring stopped");
-    }
+    g_hand_guide_active.store(false);
     g_robot.release_compliance_ctrl();
     g_robot.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
     emit("[INFO] hand guide disabled");
@@ -841,21 +776,16 @@ int main(int argc, char** argv) {
     g_robot.set_on_log_alarm(onLogAlarm);
     g_robot.set_on_tp_log(onTpLog);
     g_robot.set_on_monitoring_safety_stop_type(onSafetyStopType);
-    g_robot.set_on_monitoring_data([](const LPMONITORING_DATA pData) {
-        // keepalive — controller drops if no cb fires for 3s
-        // Also log robot button state changes (_iActualBT[5])
+    g_robot.set_on_monitoring_data([](const LPMONITORING_DATA) {}); // keepalive v0 (unused with version 1)
+    g_robot.set_on_monitoring_data_ex([](const LPMONITORING_DATA_EX pData) {
         const unsigned int* bt = pData->_tMisc._iActualBT;
         std::lock_guard<std::mutex> lk(g_btn_mx);
-        bool changed = false;
-        for (int i = 0; i < NUM_BUTTON; i++)
-            if (bt[i] != g_prev_bt[i]) { changed = true; break; }
-        if (changed) {
-            char buf[128];
-            snprintf(buf, sizeof(buf),
-                "[BTN] bt[0]=%u bt[1]=%u bt[2]=%u bt[3]=%u bt[4]=%u",
-                bt[0], bt[1], bt[2], bt[3], bt[4]);
-            emit(buf);
-            for (int i = 0; i < NUM_BUTTON; i++) g_prev_bt[i] = bt[i];
+        unsigned int prev1 = g_prev_bt[1];
+        for (int i = 0; i < NUM_BUTTON; i++) g_prev_bt[i] = bt[i];
+
+        // bt[1] rising edge during hand guide → signal frontend to record
+        if (g_hand_guide_active.load() && prev1 == 0 && bt[1] == 1) {
+            emit("[BTN_RECORD]");
         }
     });
 
@@ -939,11 +869,7 @@ int main(int argc, char** argv) {
 
     // Graceful shutdown
     g_cancel = true;
-    if (g_rt_active.load()) {
-        try { g_robot.stop_rt_control(); } catch (...) {}
-        try { g_robot.disconnect_rt_control(); } catch (...) {}
-        g_rt_active.store(false);
-    }
+    g_hand_guide_active.store(false);
     {
         std::lock_guard<std::mutex> lk(g_worker_mx);
         // worker detached — MoveStop already sent by cmdStop() if called

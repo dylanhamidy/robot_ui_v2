@@ -194,6 +194,14 @@ function app() {
             } catch (_) {}
           } else if (l.includes("[PLAN_IMPORTED]")) {
             this.loadPlans();
+          } else if (l.includes("[BTN_RECORD]")) {
+            if (this.handGuideEnabled) {
+              if (this.captureType === 'WeldStraight' || this.captureType === 'MoveC') {
+                this.recordPendingPoint();
+              } else {
+                this.recordPoint();
+              }
+            }
           } else if (l.includes("[JOG_ENABLED]")) {
             this.jogModeEnabled = true;
             this.jogModeLoading = false;
