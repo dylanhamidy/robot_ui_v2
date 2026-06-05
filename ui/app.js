@@ -78,6 +78,7 @@ function app() {
     jogReference: 0,
     jogVelocity: 20,
     jogActiveAxis: null,
+    jogInterval: null,
     jogError: "",
     jogJointAxes: [
       {axis:0,label:"J1"},{axis:1,label:"J2"},{axis:2,label:"J3"},
@@ -791,19 +792,25 @@ function app() {
 
     async jogStart(axis, sign) {
       if (!this.connected || this.running) return;
+      if (this.jogInterval) return; // already jogging
       this.jogActiveAxis = axis;
       this.jogError = "";
-      try {
-        const r = await fetch("/api/robot/jog", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ axis, reference: this.jogReference, velocity: sign * this.jogVelocity }),
-        });
-        if (!r.ok) this.jogError = (await r.json()).detail;
-      } catch (_) { this.jogError = "Request failed"; }
+      const send = async () => {
+        try {
+          const r = await fetch("/api/robot/jog", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ axis, reference: this.jogReference, velocity: sign * this.jogVelocity }),
+          });
+          if (!r.ok) { this.jogError = (await r.json()).detail; this.jogStop(); }
+        } catch (_) { this.jogError = "Request failed"; this.jogStop(); }
+      };
+      await send();
+      this.jogInterval = setInterval(send, 200);
     },
 
     async jogStop() {
+      if (this.jogInterval) { clearInterval(this.jogInterval); this.jogInterval = null; }
       if (this.jogActiveAxis === null) return;
       const axis = this.jogActiveAxis;
       this.jogActiveAxis = null;
