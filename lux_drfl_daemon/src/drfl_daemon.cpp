@@ -316,15 +316,24 @@ static bool execStep(const json& step, int stepIdx) {
 
     if (type == "FreeForm") {
         auto sub_steps = step.value("sub_steps", json::array());
+        if (sub_steps.empty()) {
+            emit("[INFO] FreeForm step " + std::to_string(stepIdx) + ": no sub-steps, skipped");
+            return true;
+        }
+
         emit("[STEP_START] " + std::to_string(stepIdx));
 
-        for (const auto& ss : sub_steps) {
+        for (size_t si = 0; si < sub_steps.size(); si++) {
             if (g_cancel || g_shutdown) return false;
+            const auto& ss = sub_steps[si];
             std::string sstype = ss.value("type", "MoveL");
 
             if (sstype == "MoveL") {
                 auto arr = ss.value("pos", json::array());
-                if (arr.size() < 6) { emit("[ERROR] FreeForm MoveL: missing pos[6]"); return false; }
+                if (arr.size() < 6) {
+                    emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " MoveL: missing pos[6]");
+                    return false;
+                }
                 float pos[NUM_TASK];
                 for (int k = 0; k < NUM_TASK; k++) pos[k] = arr[k].get<float>();
 
@@ -340,13 +349,21 @@ static bool execStep(const json& step, int stepIdx) {
                     else               { acc2[0] = acc2[1] = aa.get<float>(); }
                 }
                 float t = ss.value("time", 0.f);
-                g_robot.amovel(pos, vel2, acc2, t, MOVE_MODE_ABSOLUTE,
-                               MOVE_REFERENCE_BASE, BLENDING_SPEED_TYPE_DUPLICATE);
+                bool ok = g_robot.amovel(pos, vel2, acc2, t, MOVE_MODE_ABSOLUTE,
+                                         MOVE_REFERENCE_BASE, BLENDING_SPEED_TYPE_DUPLICATE);
+                if (!ok) {
+                    emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " amovel returned false");
+                    return false;
+                }
 
             } else if (sstype == "MoveC") {
                 auto parse6 = [](const json& j, float out[6]) {
                     for (int k = 0; k < 6; k++) out[k] = j[k].get<float>();
                 };
+                if (!ss.contains("pos_via") || !ss.contains("pos_end")) {
+                    emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " MoveC: missing pos_via/pos_end");
+                    return false;
+                }
                 float pos_via[6], pos_end[6];
                 parse6(ss["pos_via"], pos_via);
                 parse6(ss["pos_end"], pos_end);
@@ -369,12 +386,26 @@ static bool execStep(const json& step, int stepIdx) {
                 for (int k = 0; k < NUM_TASK; k++) arc[0][k] = pos_via[k];
                 for (int k = 0; k < NUM_TASK; k++) arc[1][k] = pos_end[k];
 
-                g_robot.amovec(arc, vel2, acc2, t,
-                               MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, a2, 0.f);
+                bool ok = g_robot.amovec(arc, vel2, acc2, t,
+                                         MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, a2, 0.f);
+                if (!ok) {
+                    emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " amovec returned false");
+                    return false;
+                }
             }
         }
 
-        if (!waitForStandby()) {
+        // Async calls queued but robot may still be STANDBY — wait for motion to start
+        // before calling waitForStandby, otherwise it returns immediately seeing STANDBY.
+        {
+            std::unique_lock<std::mutex> lk(g_state_mx);
+            g_state_cv.wait_for(lk, std::chrono::seconds(3), [] {
+                return g_robot_state != STATE_STANDBY || g_cancel.load() || g_shutdown.load();
+            });
+        }
+        if (g_cancel || g_shutdown) return false;
+
+        if (!waitForStandby(60000)) {
             emit("[ERROR] FreeForm waitForStandby failed");
             return false;
         }

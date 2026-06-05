@@ -200,7 +200,7 @@ function app() {
             if (this.handGuideEnabled) {
               if (this.captureType === 'WeldStraight' || this.captureType === 'MoveC') {
                 this.recordPendingPoint();
-              } else if (this.freefromCaptureTarget) {
+              } else if (this.captureType === 'FreeForm' && this.freefromCaptureTarget) {
                 const { stepIdx, subIdx, field } = this.freefromCaptureTarget;
                 this.captureFreeFormPos(stepIdx, subIdx, field);
               } else {
@@ -1109,6 +1109,18 @@ function app() {
       } finally {
         this.circleCapturing = null;
       }
+    },
+
+    armFreeFormPos(stepIdx, subIdx, field) {
+      this.freefromCaptureTarget = { stepIdx, subIdx, field };
+      this.captureType = 'FreeForm';
+    },
+
+    isFreeFormArmed(stepIdx, subIdx, field) {
+      return this.freefromCaptureTarget !== null &&
+             this.freefromCaptureTarget.stepIdx === stepIdx &&
+             this.freefromCaptureTarget.subIdx === subIdx &&
+             this.freefromCaptureTarget.field === field;
     },
 
     addFreeFormSubStep(stepIdx, type) {
