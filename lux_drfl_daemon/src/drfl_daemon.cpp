@@ -74,6 +74,11 @@ static float        g_default_vel{30.0f};
 static float        g_default_acc{30.0f};
 static float        g_default_time{0.0f};
 
+// RT monitoring (flange button detection)
+static std::atomic<bool>          g_rt_active{false};
+static std::atomic<unsigned char> g_prev_flange_di{0};
+static std::string                g_robot_ip;
+
 // Captured points accumulator (hand guide)
 struct CapturedStep {
     std::string type;
@@ -147,6 +152,23 @@ static void onTpLog(const char msg[256]) {
 
 static void onSafetyStopType(const unsigned char stop_type) {
     emit("[SAFETY_STOP] type=" + std::to_string((int)stop_type));
+}
+
+static void onRtData(const LPRT_OUTPUT_DATA_LIST pData) {
+    unsigned char cur  = pData->flange_digital_input;
+    unsigned char prev = g_prev_flange_di.load();
+    unsigned char changed = cur ^ prev;
+    if (!changed) return;
+
+    unsigned char rising  = changed & cur;
+    unsigned char falling = changed & (~cur);
+    char buf[160];
+    snprintf(buf, sizeof(buf),
+        "[FLANGE_BTN] raw=0x%02X rising=0x%02X falling=0x%02X  b5=%d b4=%d b3=%d b2=%d b1=%d b0=%d",
+        (unsigned)cur, (unsigned)rising, (unsigned)falling,
+        (cur>>5)&1, (cur>>4)&1, (cur>>3)&1, (cur>>2)&1, (cur>>1)&1, cur&1);
+    emit(buf);
+    g_prev_flange_di.store(cur);
 }
 
 static void onDisconnected() {
@@ -637,10 +659,45 @@ static void cmdEnableHandGuide() {
     g_robot.set_robot_mode(ROBOT_MODE_MANUAL);
     float stx[NUM_TASK] = {3000.0f, 3000.0f, 3000.0f, 200.0f, 200.0f, 200.0f};
     g_robot.task_compliance_ctrl(stx, COORDINATE_SYSTEM_TOOL, 0.0f);
+
+    if (!g_rt_active.load()) {
+        bool conn = g_robot.connect_rt_control(g_robot_ip, 12347);
+        if (conn) {
+            std::string versions = g_robot.get_rt_control_output_version_list();
+            emit("[INFO] RT output versions: " + versions);
+            std::string ver = "v1.0";
+            if (!versions.empty()) {
+                auto comma = versions.find(',');
+                ver = (comma != std::string::npos) ? versions.substr(0, comma) : versions;
+                while (!ver.empty() && ver.front() == ' ') ver.erase(0, 1);
+                while (!ver.empty() && ver.back()  == ' ') ver.pop_back();
+            }
+            emit("[INFO] RT using version: " + ver);
+            g_robot.set_rt_control_output(ver, 0.01f, 4);
+            g_prev_flange_di.store(0);
+            g_robot.set_on_rt_monitoring_data(onRtData);
+            if (g_robot.start_rt_control()) {
+                g_rt_active.store(true);
+                emit("[INFO] RT flange button monitoring active — press each button to identify bits");
+            } else {
+                emit("[INFO] RT start_rt_control failed — flange button monitoring unavailable");
+                g_robot.disconnect_rt_control();
+            }
+        } else {
+            emit("[INFO] RT connect_rt_control failed — flange button monitoring unavailable");
+        }
+    }
+
     emit("[INFO] hand guide enabled");
 }
 
 static void cmdDisableHandGuide() {
+    if (g_rt_active.load()) {
+        g_robot.stop_rt_control();
+        g_robot.disconnect_rt_control();
+        g_rt_active.store(false);
+        emit("[INFO] RT flange button monitoring stopped");
+    }
     g_robot.release_compliance_ctrl();
     g_robot.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
     emit("[INFO] hand guide disabled");
@@ -751,6 +808,7 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--port") && i + 1 < argc) port = std::stoi(argv[++i]);
         // --drcf handled via DRCF_VERSION compile definition
     }
+    g_robot_ip = ip;
 
     std::signal(SIGINT,  sigHandler);
     std::signal(SIGTERM, sigHandler);
@@ -846,6 +904,11 @@ int main(int argc, char** argv) {
 
     // Graceful shutdown
     g_cancel = true;
+    if (g_rt_active.load()) {
+        try { g_robot.stop_rt_control(); } catch (...) {}
+        try { g_robot.disconnect_rt_control(); } catch (...) {}
+        g_rt_active.store(false);
+    }
     {
         std::lock_guard<std::mutex> lk(g_worker_mx);
         // worker detached — MoveStop already sent by cmdStop() if called
