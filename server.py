@@ -428,6 +428,7 @@ async def create_plan(body: PlanBody):
     if body.turntable_parallel is not None:
         data["turntable_parallel"] = body.turntable_parallel
     p.write_text(json.dumps(data, indent=2))
+    await _broadcast(f"[PLAN_IMPORTED] {data['name']}\n")
     return data
 
 class ImportBody(BaseModel):
@@ -866,10 +867,8 @@ async def hand_guide_record():
 @app.post("/api/robot/hand_guide/clear")
 async def hand_guide_clear():
     global _captured_points
-    ok = await _drfl_send({"cmd": "clear_plan"})
-    if ok:
-        _captured_points.clear()
-    return {"ok": ok}
+    _captured_points.clear()
+    return {"ok": True}
 
 @app.get("/api/robot/hand_guide/points")
 async def hand_guide_points():
@@ -889,10 +888,6 @@ async def hand_guide_captured(request: Request):
     await _broadcast(f"[CAPTURE] {json.dumps(point)}\n")
     return {"ok": True, "count": len(_captured_points)}
 
-@app.post("/api/robot/hand_guide/save")
-async def hand_guide_save():
-    ok = await _drfl_send({"cmd": "save_plan"})
-    return {"ok": ok}
 
 class HandGuideTypeBody(BaseModel):
     move_type: str

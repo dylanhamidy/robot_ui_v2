@@ -79,17 +79,6 @@ static unsigned int            g_prev_bt[NUM_BUTTON] = {};
 static std::atomic<bool>       g_hand_guide_active{false};
 
 // Captured points accumulator (hand guide)
-struct CapturedStep {
-    std::string type;
-    float posj[NUM_JOINT];
-    float posx[NUM_TASK];
-    float vel;
-    float acc;
-    float time_s;
-};
-static std::mutex              g_points_mx;
-static std::vector<CapturedStep> g_points;
-static std::string             g_plan_name;  // set by save_plan / set_param
 
 // ── Callbacks ─────────────────────────────────────────────────────────────────
 
@@ -267,9 +256,10 @@ static bool execStep(const json& step, int stepIdx) {
         for (int i = 0; i < NUM_TASK; i++) arc[1][i] = pos_end[i];
 
         emit("[INFO] MoveC arc: angle2=" + std::to_string(angle2));
+        // fTargetAngle1 = total sweep angle (360 = full circle), fTargetAngle2 = accel/decel angle
         bool arc_ok = g_robot.movec(arc, vel2, acc2, time_s,
                                     MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE,
-                                    0.f, angle2);
+                                    angle2, 0.f);
         emit("[INFO] MoveC movec returned " + std::string(arc_ok ? "true" : "false"));
         if (!waitForStandby()) {
             emit("[ERROR] MoveC arc waitForStandby failed");
@@ -464,32 +454,18 @@ static void cmdRecordPoint() {
         t    = g_default_time;
     }
 
-    CapturedStep s;
-    s.type  = type;
-    s.vel   = vel;
-    s.acc   = acc;
-    s.time_s = t;
-    for (int i = 0; i < NUM_JOINT; i++) s.posj[i] = pj->_fPosition[i];
-    for (int i = 0; i < NUM_TASK;  i++) s.posx[i] = px->_fTargetPos[i];
-
-    {
-        std::lock_guard<std::mutex> lk(g_points_mx);
-        g_points.push_back(s);
-    }
-
-    // Build step JSON matching server's expected shape
     json step;
     step["type"] = type;
     if (type == "MoveJ") {
         json pos = json::array();
-        for (int i = 0; i < NUM_JOINT; i++) pos.push_back(s.posj[i]);
+        for (int i = 0; i < NUM_JOINT; i++) pos.push_back(pj->_fPosition[i]);
         step["pos"] = pos;
         step["vel"] = vel;
         step["acc"] = acc;
         step["time"] = t;
     } else {
         json pos = json::array();
-        for (int i = 0; i < NUM_TASK; i++) pos.push_back(s.posx[i]);
+        for (int i = 0; i < NUM_TASK; i++) pos.push_back(px->_fTargetPos[i]);
         step["pos"] = pos;
         step["vel"] = json::array({vel, vel});
         step["acc"] = json::array({acc, acc});
@@ -501,58 +477,6 @@ static void cmdRecordPoint() {
     // Silent — server broadcasts [CAPTURE] from /api/robot/hand_guide/captured
 }
 
-static void cmdClearPlan() {
-    std::lock_guard<std::mutex> lk(g_points_mx);
-    g_points.clear();
-}
-
-static void cmdSavePlan() {
-    std::vector<CapturedStep> pts;
-    {
-        std::lock_guard<std::mutex> lk(g_points_mx);
-        pts = g_points;
-    }
-
-    // Auto-generate name from timestamp
-    std::time_t now = std::time(nullptr);
-    char tbuf[32];
-    std::strftime(tbuf, sizeof(tbuf), "plan_%Y%m%d_%H%M%S", std::localtime(&now));
-    std::string name = g_plan_name.empty() ? tbuf : g_plan_name;
-
-    json steps_arr = json::array();
-    for (auto& s : pts) {
-        json step;
-        step["type"] = s.type;
-        step["enabled"] = true;
-        if (s.type == "MoveJ") {
-            json pos = json::array();
-            for (int i = 0; i < NUM_JOINT; i++) pos.push_back(s.posj[i]);
-            step["pos"] = pos;
-            step["vel"] = s.vel;
-            step["acc"] = s.acc;
-            step["time"] = s.time_s;
-        } else {
-            json pos = json::array();
-            for (int i = 0; i < NUM_TASK; i++) pos.push_back(s.posx[i]);
-            step["pos"] = pos;
-            step["vel"] = json::array({s.vel, s.vel});
-            step["acc"] = json::array({s.acc, s.acc});
-            step["time"] = s.time_s;
-        }
-        steps_arr.push_back(step);
-    }
-
-    json plan;
-    plan["name"]  = name;
-    plan["steps"] = steps_arr;
-
-    bool ok = httpPost("http://localhost:8000/api/plans/import", plan.dump());
-    if (ok) {
-        emit("[INFO] plan saved: " + name);
-    } else {
-        emit("[ERROR] save_plan: HTTP POST failed");
-    }
-}
 
 static void cmdEnableHandGuide() {
     g_robot.set_robot_mode(ROBOT_MODE_MANUAL);
@@ -587,8 +511,6 @@ static void cmdSetParam(const json& cmd) {
         g_default_acc = val->get<float>();
     } else if (key == "default_time") {
         g_default_time = val->get<float>();
-    } else if (key == "plan_name") {
-        g_plan_name = val->get<std::string>();
     }
 }
 
@@ -650,8 +572,6 @@ static void dispatch(const json& cmd) {
     else if (c == "enable_jog")         cmdEnableJog();
     else if (c == "disable_jog")        cmdDisableJog();
     else if (c == "record_point")       cmdRecordPoint();
-    else if (c == "clear_plan")         cmdClearPlan();
-    else if (c == "save_plan")          cmdSavePlan();
     else if (c == "enable_hand_guide")  cmdEnableHandGuide();
     else if (c == "disable_hand_guide") cmdDisableHandGuide();
     else if (c == "set_param")          cmdSetParam(cmd);
