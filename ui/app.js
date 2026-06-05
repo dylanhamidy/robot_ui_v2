@@ -21,6 +21,7 @@ function app() {
     ttError: "",
     ttPendingPort: null,
     ttRejectedPorts: [],
+    ttEmgState: null,
     showTtDetectModal: false,
     ttSudoPass: "",
     ttDetectLoading: false,
@@ -39,6 +40,7 @@ function app() {
     modalTtError: "",
     modalTtLoading: false,
     modalTtParallel: false,
+    modalLoop: false,
     get modalTtSpeedDelay() {
       return Math.round(5 * Math.pow(1000, 1 - this.modalTtSpeedPct / 100));
     },
@@ -187,6 +189,15 @@ function app() {
           } else if (l.includes("[JOG_DISABLED]")) {
             this.jogModeEnabled = false;
             this.jogModeLoading = false;
+          } else if (l.startsWith("[EMG]")) {
+            const val = parseInt(l.split(" ")[1]);
+            this.ttEmgState = isNaN(val) ? null : val;
+          } else if (l.includes("[EMG_CLEAR]")) {
+            this.ttEmgState = 1;
+          } else if (l.includes("[EMERGENCY STOP]")) {
+            this.running = false;
+            this.activePlan = null;
+            this.ttEnabled = false;
           } else if (l.includes("[DISCONNECTED]")) {
             this.connected = false;
             this.handGuideEnabled = false;
@@ -264,6 +275,7 @@ function app() {
       this.editMode = false;
       this.planMode = "manual";
       this.modalName = "";
+      this.modalLoop = false;
       this.modalSteps = [];
       this.planModalError = "";
       this.modalDirty = false;
@@ -288,6 +300,7 @@ function app() {
       this._resetModalTt();
       fetch("/api/robot/hand_guide/points", { method: "DELETE" });
       this.modalName = this.selected.name;
+      this.modalLoop = this.selected.loop === true;
       const ttParallel = this.selected.turntable_parallel;
       this.modalTtParallel = !!ttParallel;
       if (ttParallel) {
@@ -301,6 +314,42 @@ function app() {
             direction: s.direction || "CW",
             speed_us: s.speed_us || 500,
             duration: s.duration || 3.0,
+            with_laser: s.with_laser || false,
+            enabled: s.enabled !== false,
+          };
+        }
+        if (s.type === "Laser") {
+          return {
+            type: "Laser",
+            duration: s.duration || 1.0,
+            enabled: s.enabled !== false,
+          };
+        }
+        if (s.type === "WeldStraight") {
+          return {
+            type: "WeldStraight",
+            pos_a: [...(s.pos_a || [0, 0, 0, 0, 0, 0])],
+            pos_b: [...(s.pos_b || [0, 0, 0, 0, 0, 0])],
+            vel: Array.isArray(s.vel) ? s.vel[0] : (s.vel ?? 10),
+            acc: Array.isArray(s.acc) ? s.acc[0] : (s.acc ?? 10),
+            time: s.time ?? 0,
+            with_laser: s.with_laser || false,
+            laser_delay: s.laser_delay ?? 0,
+            enabled: s.enabled !== false,
+          };
+        }
+        if (s.type === "MoveC") {
+          return {
+            type: "MoveC",
+            pos_start: s.pos_start ? [...s.pos_start] : null,
+            pos_via: s.pos_via ? [...s.pos_via] : null,
+            pos_end: s.pos_end ? [...s.pos_end] : null,
+            vel: Array.isArray(s.vel) ? s.vel[0] : (s.vel ?? 50),
+            acc: Array.isArray(s.acc) ? s.acc[0] : (s.acc ?? 100),
+            time: s.time ?? 0,
+            angle2: s.angle2 ?? 0,
+            with_laser: s.with_laser || false,
+            laser_delay: s.laser_delay ?? 0,
             enabled: s.enabled !== false,
           };
         }
@@ -310,6 +359,9 @@ function app() {
           vel: Array.isArray(s.vel) ? s.vel[0] : (s.vel ?? 30),
           acc: Array.isArray(s.acc) ? s.acc[0] : (s.acc ?? 30),
           time: s.time ?? 2,
+          delay: s.delay ?? 0,
+          with_laser: s.with_laser || false,
+          laser_delay: s.laser_delay ?? 0,
           enabled: s.enabled !== false,
           with_turntable: s.with_turntable || false,
         };
@@ -421,8 +473,18 @@ function app() {
         direction: this.modalTtDirection,
         speed_us: this.modalTtSpeedDelay,
         duration: Number(this.modalTtDuration) || 3.0,
+        with_laser: false,
         enabled: true,
       });
+      this.markDirty();
+      this.$nextTick(() => {
+        const last = this.$refs.stepsContainer?.lastElementChild;
+        if (last) last.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      });
+    },
+
+    addLaserStep() {
+      this.modalSteps.push({ type: "Laser", duration: 1.0, enabled: true });
       this.markDirty();
       this.$nextTick(() => {
         const last = this.$refs.stepsContainer?.lastElementChild;
@@ -441,6 +503,9 @@ function app() {
         vel: 30,
         acc: 30,
         time: 2,
+        delay: 0,
+        laser_delay: 0,
+        with_laser: false,
         enabled: true,
         with_turntable: false,
       });
@@ -473,24 +538,39 @@ function app() {
     },
 
     onStepTypeChange(i, step) {
+      const clearRobot = () => { delete step.pos; delete step.vel; delete step.acc; delete step.time; delete step.delay; delete step.with_turntable; delete step.with_laser; delete step.laser_delay; };
+      const clearTt = () => { delete step.direction; delete step.speed_us; delete step.duration; delete step.with_laser; };
+      const clearWeld = () => { delete step.pos_a; delete step.pos_b; delete step.with_laser; delete step.laser_delay; delete step.vel; delete step.acc; delete step.time; };
+      const clearCircle = () => { delete step.pos_start; delete step.pos_via; delete step.pos_end; delete step.angle2; delete step.with_laser; delete step.laser_delay; delete step.vel; delete step.acc; delete step.time; };
+
       if (step.type === "Turntable") {
+        clearRobot(); clearWeld(); clearCircle();
         step.direction = this.modalTtDirection || "CW";
         step.speed_us = this.modalTtSpeedDelay || 500;
         step.duration = this.modalTtDuration || 3.0;
-        delete step.pos;
-        delete step.vel;
-        delete step.acc;
-        delete step.time;
-        delete step.with_turntable;
+        step.with_laser = false;
+      } else if (step.type === "Laser") {
+        clearRobot(); clearTt(); clearWeld(); clearCircle();
+        step.duration = 1.0;
+      } else if (step.type === "WeldStraight") {
+        clearTt(); clearCircle();
+        delete step.pos; delete step.delay; delete step.with_turntable;
+        step.pos_a = [0, 0, 0, 0, 0, 0];
+        step.pos_b = [0, 0, 0, 0, 0, 0];
+        step.vel = 10; step.acc = 10; step.time = 0;
+        step.with_laser = false; step.laser_delay = 0;
+      } else if (step.type === "MoveC") {
+        clearTt(); clearWeld();
+        delete step.pos; delete step.delay; delete step.with_turntable;
+        step.pos_start = null; step.pos_via = null; step.pos_end = null;
+        step.vel = 50; step.acc = 100; step.time = 0; step.angle2 = 0;
+        step.with_laser = false; step.laser_delay = 0;
       } else {
+        clearTt(); clearWeld(); clearCircle();
         step.pos = [0, 0, 0, 0, 0, 0];
-        step.vel = 30;
-        step.acc = 30;
-        step.time = 2;
+        step.vel = 30; step.acc = 30; step.time = 2; step.delay = 0;
+        step.with_laser = false; step.laser_delay = 0;
         step.with_turntable = false;
-        delete step.direction;
-        delete step.speed_us;
-        delete step.duration;
       }
       this.markDirty();
     },
@@ -557,24 +637,61 @@ function app() {
             direction: s.direction || "CW",
             speed_us: Number(s.speed_us) || 500,
             duration: Number(s.duration) || 3.0,
+            with_laser: s.with_laser || false,
+            enabled: s.enabled !== false,
+          };
+        }
+        if (s.type === "Laser") {
+          return { type: "Laser", duration: Number(s.duration) || 1.0, enabled: s.enabled !== false };
+        }
+        if (s.type === "WeldStraight") {
+          const vel = Number(s.vel) || 10;
+          const acc = Number(s.acc) || 10;
+          return {
+            type: "WeldStraight",
+            pos_a: (s.pos_a || [0,0,0,0,0,0]).map(Number),
+            pos_b: (s.pos_b || [0,0,0,0,0,0]).map(Number),
+            vel: [vel, vel], acc: [acc, acc],
+            time: Number(s.time) || 0,
+            with_laser: s.with_laser || false,
+            laser_delay: Number(s.laser_delay) || 0,
+            enabled: s.enabled !== false,
+          };
+        }
+        if (s.type === "MoveC") {
+          const vel = Number(s.vel) || 50;
+          const acc = Number(s.acc) || 100;
+          return {
+            type: "MoveC",
+            pos_start: s.pos_start ? s.pos_start.map(Number) : null,
+            pos_via: s.pos_via ? s.pos_via.map(Number) : null,
+            pos_end: s.pos_end ? s.pos_end.map(Number) : null,
+            vel: [vel, vel], acc: [acc, acc],
+            time: Number(s.time) || 0,
+            angle1: 0.0, angle2: Number(s.angle2) || 0,
+            with_laser: s.with_laser || false,
+            laser_delay: Number(s.laser_delay) || 0,
             enabled: s.enabled !== false,
           };
         }
         const step = { type: s.type, pos: s.pos.map(Number) };
         if (s.vel != null)
-          step.vel =
-            s.type === "MoveL" ? [Number(s.vel), Number(s.vel)] : Number(s.vel);
+          step.vel = s.type === "MoveL" ? [Number(s.vel), Number(s.vel)] : Number(s.vel);
         if (s.acc != null)
-          step.acc =
-            s.type === "MoveL" ? [Number(s.acc), Number(s.acc)] : Number(s.acc);
+          step.acc = s.type === "MoveL" ? [Number(s.acc), Number(s.acc)] : Number(s.acc);
         if (s.time != null) step.time = Number(s.time);
+        if (s.delay) step.delay = Number(s.delay);
+        if (s.with_laser) { step.with_laser = true; step.laser_delay = Number(s.laser_delay) || 0; }
         step.enabled = s.enabled !== false;
         if (this.modalTtParallel) step.with_turntable = s.with_turntable || false;
         return step;
       });
-      const extraPlanFields = this.modalTtParallel
-        ? { turntable_parallel: { direction: this.modalTtDirection, speed_us: this.modalTtSpeedDelay } }
-        : {};
+      const extraPlanFields = {
+        loop: this.modalLoop,
+        ...(this.modalTtParallel
+          ? { turntable_parallel: { direction: this.modalTtDirection, speed_us: this.modalTtSpeedDelay } }
+          : {}),
+      };
 
       if (this.editMode) {
         await fetch(`/api/plans/${this.selected.name}`, {
@@ -790,6 +907,30 @@ function app() {
       // Step appears via [CAPTURE] WS event → pushed to modalSteps
     },
 
+    async captureWeldPoint(step, field) {
+      const r = await fetch("/api/robot/capture_pose", { method: "POST" });
+      if (!r.ok) return;
+      const data = await r.json();
+      step[field] = data.pos;
+      this.markDirty();
+    },
+
+    async captureCirclePoint(step, field) {
+      const r = await fetch("/api/robot/capture_pose", { method: "POST" });
+      if (!r.ok) return;
+      const data = await r.json();
+      step[field] = data.pos;
+      this.markDirty();
+    },
+
+    _computeWeldDistance(pos_a, pos_b) {
+      if (!pos_a || !pos_b) return null;
+      const dx = pos_b[0] - pos_a[0];
+      const dy = pos_b[1] - pos_a[1];
+      const dz = pos_b[2] - pos_a[2];
+      return Math.sqrt(dx*dx + dy*dy + dz*dz).toFixed(1);
+    },
+
     async clearCapture() {
       this.handGuideLoading = true;
       await fetch("/api/robot/hand_guide/clear", { method: "POST" });
@@ -861,6 +1002,7 @@ function app() {
         this.ttDirection = s.direction;
         this.ttSpeedPct = this._pctFromDelay(s.speed);
         this.ttRejectedPorts = s.rejected_ports || [];
+        if (s.emg_state !== undefined && s.emg_state !== null) this.ttEmgState = s.emg_state;
         if (s.pending_port && !this.showTtDetectModal) {
           this.ttPendingPort = s.pending_port;
           this.ttSudoPass = "";

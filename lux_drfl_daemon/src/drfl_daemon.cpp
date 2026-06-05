@@ -358,6 +358,51 @@ static bool execStep(const json& step, int stepIdx) {
         return true;
     }
 
+    if (type == "WeldStraight") {
+        auto parse6 = [](const json& j, float out[6]) {
+            for (int i = 0; i < 6; i++) out[i] = j[i].get<float>();
+        };
+        float pos_a[6], pos_b[6];
+        parse6(step["pos_a"], pos_a);
+        parse6(step["pos_b"], pos_b);
+
+        float fv[2] = {100.f, 100.f}, fa[2] = {100.f, 100.f};
+        emit("[INFO] WeldStraight step " + std::to_string(stepIdx) + ": approach A");
+        bool approach_ok = g_robot.movel(pos_a, fv, fa, 0.f, MOVE_MODE_ABSOLUTE,
+                                         MOVE_REFERENCE_BASE, 0.f, BLENDING_SPEED_TYPE_DUPLICATE);
+        emit("[INFO] WeldStraight approach movel returned " + std::string(approach_ok ? "true" : "false"));
+        if (!waitForStandby()) {
+            emit("[ERROR] WeldStraight approach waitForStandby failed");
+            return false;
+        }
+
+        // [STEP_START] emitted here — laser fires at weld start, not during fast approach
+        emit("[STEP_START] " + std::to_string(stepIdx));
+
+        float vel2[2] = {10.f, 10.f}, acc2[2] = {10.f, 10.f};
+        if (step.contains("vel")) {
+            auto& vv = step["vel"];
+            if (vv.is_array()) { vel2[0] = vv[0].get<float>(); vel2[1] = vv[1].get<float>(); }
+            else                { vel2[0] = vel2[1] = vv.get<float>(); }
+        }
+        if (step.contains("acc")) {
+            auto& aa = step["acc"];
+            if (aa.is_array()) { acc2[0] = aa[0].get<float>(); acc2[1] = aa[1].get<float>(); }
+            else                { acc2[0] = acc2[1] = aa.get<float>(); }
+        }
+        float time_s = step.value("time", 0.f);
+        emit("[INFO] WeldStraight weld: A→B absolute base frame");
+        bool weld_ok = g_robot.movel(pos_b, vel2, acc2, time_s, MOVE_MODE_ABSOLUTE,
+                                     MOVE_REFERENCE_BASE, 0.f, BLENDING_SPEED_TYPE_DUPLICATE);
+        emit("[INFO] WeldStraight weld movel returned " + std::string(weld_ok ? "true" : "false"));
+        if (!waitForStandby()) {
+            emit("[ERROR] WeldStraight weld waitForStandby failed");
+            return false;
+        }
+        emit("[INFO] WeldStraight step " + std::to_string(stepIdx) + " complete");
+        return true;
+    }
+
     auto arr = step.value("pos", json::array());
     if (arr.size() < 6) {
         emit("[ERROR] step missing pos[6]");
@@ -423,15 +468,22 @@ static void planWorker(json steps, bool single_pass, bool loop) {
     while (keep_going && !g_cancel && !g_shutdown) {
         for (int i = 0; i < static_cast<int>(steps.size()); i++) {
             if (g_cancel || g_shutdown) break;
-            // MoveC emits [STEP_START] itself after the approach phase so the laser
-            // fires at arc start, not during the fast approach move.
+            // MoveC and WeldStraight emit [STEP_START] themselves after the approach
+            // phase so the laser fires at arc/weld start, not during the fast approach.
             std::string stype = steps[i].value("type", "MoveJ");
-            if (stype != "MoveC") emit("[STEP_START] " + std::to_string(i));
+            if (stype != "MoveC" && stype != "WeldStraight")
+                emit("[STEP_START] " + std::to_string(i));
             bool ok = execStep(steps[i], i);
             if (!ok && !g_cancel && !g_shutdown) {
                 emit("[ERROR] Step " + std::to_string(i) + " failed");
                 g_cancel = true;
                 break;
+            }
+            // Per-step delay (extra pause after motion before advancing)
+            float delay_s = steps[i].value("delay", 0.f);
+            if (delay_s > 0.f && !g_cancel && !g_shutdown) {
+                auto ms = static_cast<int>(delay_s * 1000.f);
+                std::this_thread::sleep_for(std::chrono::milliseconds(ms));
             }
         }
         keep_going = loop && !single_pass;
@@ -613,6 +665,22 @@ static void cmdSetParam(const json& cmd) {
     }
 }
 
+static void cmdCapturePose() {
+    LPROBOT_TASK_POSE px = g_robot.get_current_posx(COORDINATE_SYSTEM_BASE);
+    if (!px) {
+        emit("[ERROR] capture_pose: could not read posx");
+        return;
+    }
+    // Emit [POSE] [x,y,z,rx,ry,rz] — server parses and returns to client
+    std::string out = "[POSE] [";
+    for (int i = 0; i < NUM_TASK; i++) {
+        out += std::to_string(px->_fTargetPos[i]);
+        if (i < NUM_TASK - 1) out += ",";
+    }
+    out += "]";
+    emit(out);
+}
+
 static void cmdClose() {
     g_shutdown = true;
 }
@@ -660,6 +728,7 @@ static void dispatch(const json& cmd) {
     else if (c == "enable_hand_guide")  cmdEnableHandGuide();
     else if (c == "disable_hand_guide") cmdDisableHandGuide();
     else if (c == "set_param")          cmdSetParam(cmd);
+    else if (c == "capture_pose")       cmdCapturePose();
     else if (c == "close")              cmdClose();
     else emit("[ERROR] unknown command: " + c);
 }

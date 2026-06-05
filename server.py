@@ -50,11 +50,13 @@ STATS_DIR.mkdir(exist_ok=True)
 async def lifespan(_app: FastAPI):
     scan = asyncio.create_task(_turntable_scan_task())
     watchdog = asyncio.create_task(_turntable_watchdog_task())
+    serial_read = asyncio.create_task(_tt_serial_read_task())
     yield
     scan.cancel()
     watchdog.cancel()
+    serial_read.cancel()
     try:
-        await asyncio.gather(scan, watchdog)
+        await asyncio.gather(scan, watchdog, serial_read)
     except asyncio.CancelledError:
         pass
     _kill_robot_procs()
@@ -87,6 +89,11 @@ _tt_direction: str = "CW"
 _tt_speed: int = 50  # microseconds between pulses
 _tt_pending_port: Optional[str] = None
 _tt_rejected_ports: set = set()
+_emg_state: Optional[int] = None  # None=unknown, 1=normal, 0=triggered
+
+# Pose capture signalling (capture_pose endpoint)
+_pose_event: Optional[asyncio.Event] = None
+_pose_result: Optional[list] = None
 
 
 # ── helpers ────────────────────────────────────────────────────────────────
@@ -145,6 +152,48 @@ async def _turntable_watchdog_task():
                 _close_turntable()
         await asyncio.sleep(2)
 
+async def _handle_emergency():
+    global _stop_requested, _tt_enabled, _active_plan
+    if _turntable and _turntable.is_open:
+        try:
+            _turntable.write(b"DISABLE\n")
+            _turntable.write(b"LAS:DIS\n")
+        except Exception:
+            pass
+    _tt_enabled = False
+    await _drfl_send({"cmd": "stop"})
+    _active_plan = None
+    _stop_requested = False
+    await _broadcast("[EMERGENCY STOP]\n")
+
+async def _debounced_emg_clear():
+    await asyncio.sleep(0.2)
+    if _emg_state == 1:
+        await _broadcast("[EMG_CLEAR]\n")
+
+async def _tt_serial_read_task():
+    """Read EMG lines from Arduino; trigger emergency stop on EMG:0."""
+    global _emg_state
+    loop = asyncio.get_event_loop()
+    while True:
+        if _turntable and _turntable.is_open:
+            try:
+                if _turntable.in_waiting > 0:
+                    line = await loop.run_in_executor(None, _turntable.readline)
+                    text = line.decode(errors="replace").strip()
+                    if text.startswith("EMG:"):
+                        val = int(text.split(":")[1])
+                        prev = _emg_state
+                        _emg_state = val
+                        await _broadcast(f"[EMG] {val}\n")
+                        if val == 0 and prev != 0:
+                            await _handle_emergency()
+                        elif val == 1 and prev == 0:
+                            asyncio.create_task(_debounced_emg_clear())
+            except Exception:
+                pass
+        await asyncio.sleep(0.005)
+
 async def _schedule_safety_shutdown():
     """Grace-period watchdog: if no browser client reconnects within 8 s, stop the robot."""
     await asyncio.sleep(8)
@@ -163,11 +212,42 @@ def _stats_path(name: str) -> Path:
 
 def _coerce_step_floats(step: dict) -> dict:
     """Ensure all numeric fields in a step are stored as the correct Python types."""
-    if step.get("type") == "Turntable":
+    if step.get("type") in ("Turntable", "Laser"):
         if "speed_us" in step:
             step["speed_us"] = int(step["speed_us"])
         if "duration" in step:
             step["duration"] = float(step["duration"])
+        if "with_laser" in step:
+            step["with_laser"] = bool(step["with_laser"])
+        return step
+    if step.get("type") == "WeldStraight":
+        step["pos_a"] = [float(v) for v in step["pos_a"]]
+        step["pos_b"] = [float(v) for v in step["pos_b"]]
+        for key in ("vel", "acc"):
+            if key in step:
+                v = step[key]
+                step[key] = [float(x) for x in v] if isinstance(v, list) else float(v)
+        for key in ("time", "laser_delay"):
+            if key in step:
+                step[key] = float(step[key])
+        if "with_laser" in step:
+            step["with_laser"] = bool(step["with_laser"])
+        return step
+    if step.get("type") == "MoveC":
+        for key in ("pos_start", "pos_via"):
+            if key in step and step[key] is not None:
+                step[key] = [float(v) for v in step[key]]
+        if step.get("pos_end") is not None:
+            step["pos_end"] = [float(v) for v in step["pos_end"]]
+        for key in ("vel", "acc"):
+            if key in step:
+                v = step[key]
+                step[key] = [float(x) for x in v] if isinstance(v, list) else float(v)
+        for key in ("time", "angle1", "angle2"):
+            if key in step:
+                step[key] = float(step[key])
+        if "with_laser" in step:
+            step["with_laser"] = bool(step["with_laser"])
         return step
     if "pos" in step:
         step["pos"] = [float(v) for v in step["pos"]]
@@ -177,6 +257,12 @@ def _coerce_step_floats(step: dict) -> dict:
             step[key] = [float(x) for x in v] if isinstance(v, list) else float(v)
     if "time" in step:
         step["time"] = float(step["time"])
+    if "delay" in step:
+        step["delay"] = float(step["delay"])
+    if "laser_delay" in step:
+        step["laser_delay"] = float(step["laser_delay"])
+    if "with_laser" in step:
+        step["with_laser"] = bool(step["with_laser"])
     return step
 
 def _load_stats(name: str) -> dict:
@@ -265,6 +351,17 @@ async def _drfl_reader_task():
                 _drfl_done_result = -1
                 dev.set()
 
+        # Pose capture — unblock capture_pose endpoint
+        global _pose_event, _pose_result
+        pe = _pose_event
+        if pe is not None and not pe.is_set() and "[POSE]" in text:
+            try:
+                raw = text.split("[POSE]")[1].strip()
+                _pose_result = json.loads(raw)
+            except Exception:
+                _pose_result = None
+            pe.set()
+
         # Per-line callback (parallel turntable mode passes tt_step_callback here)
         cb = _drfl_on_line
         if cb:
@@ -319,6 +416,7 @@ class PlanBody(BaseModel):
     name: str
     steps: list
     turntable_parallel: Optional[dict] = None
+    loop: bool = False
 
 @app.post("/api/plans")
 async def create_plan(body: PlanBody):
@@ -326,7 +424,7 @@ async def create_plan(body: PlanBody):
     if p.exists():
         raise HTTPException(400, "Plan already exists")
     steps = [_coerce_step_floats(s) for s in body.steps]
-    data = {"name": body.name, "created_at": datetime.now().isoformat(timespec="seconds"), "steps": steps}
+    data = {"name": body.name, "created_at": datetime.now().isoformat(timespec="seconds"), "steps": steps, "loop": body.loop}
     if body.turntable_parallel is not None:
         data["turntable_parallel"] = body.turntable_parallel
     p.write_text(json.dumps(data, indent=2))
@@ -357,6 +455,7 @@ async def get_plan(name: str):
 class UpdateBody(BaseModel):
     steps: list
     turntable_parallel: Optional[dict] = None
+    loop: bool = False
 
 @app.put("/api/plans/{name}")
 async def update_plan(name: str, body: UpdateBody):
@@ -365,6 +464,7 @@ async def update_plan(name: str, body: UpdateBody):
         raise HTTPException(404, "Not found")
     data = json.loads(p.read_text())
     data["steps"] = [_coerce_step_floats(s) for s in body.steps]
+    data["loop"] = body.loop
     if body.turntable_parallel is not None:
         data["turntable_parallel"] = body.turntable_parallel
     else:
@@ -475,17 +575,19 @@ async def _run_plan_task(plan_name: str, plan_path: Path):
     plan_data = json.loads(plan_path.read_text())
     steps = plan_data.get("steps", [])
     active_steps = [s for s in steps if s.get("enabled", True)]
-    has_robot_steps = any(s.get("type") != "Turntable" for s in active_steps)
+    has_robot_steps = any(s.get("type") not in ("Turntable", "Laser") for s in active_steps)
 
     tt_parallel = plan_data.get("turntable_parallel")
     is_parallel = tt_parallel is not None
     tt_step_callback = None
 
+    plan_loops = plan_data.get("loop", False)
+
     if is_parallel:
-        # Parallel: one daemon run_plan loops, turntable reacts to [STEP_START] events
+        # Parallel: daemon handles looping internally when plan_loops=True
         segments = [("robot", active_steps)]
-        use_single_pass = False
-        should_loop = False  # daemon loops internally
+        use_single_pass = not plan_loops
+        should_loop = False  # daemon loops internally when loop=True
 
         with_tt = [s.get("with_turntable", False) for s in active_steps]
 
@@ -510,23 +612,31 @@ async def _run_plan_task(plan_name: str, plan_path: Path):
             except Exception as e:
                 await _broadcast(f"[WARN] Turntable error: {e}\n")
     else:
-        # Sequential: split at Turntable step boundaries
+        # Sequential: split at Turntable/Laser step boundaries
         segments = []
         robot_buf: list = []
         for step in active_steps:
-            if step.get("type") == "Turntable":
+            stype = step.get("type")
+            if stype in ("Turntable", "Laser"):
                 if robot_buf:
                     segments.append(("robot", list(robot_buf)))
                     robot_buf = []
-                segments.append(("turntable", step))
+                segments.append((stype.lower(), step))
             else:
                 robot_buf.append(step)
         if robot_buf:
             segments.append(("robot", robot_buf))
 
-        has_turntable_segs = any(s[0] == "turntable" for s in segments)
-        use_single_pass = has_turntable_segs
-        should_loop = has_turntable_segs or not has_robot_steps
+        has_tt_or_laser_segs = any(s[0] in ("turntable", "laser") for s in segments)
+        use_single_pass = has_tt_or_laser_segs or not plan_loops
+        should_loop = plan_loops
+
+        def _laser(enable: bool):
+            if _turntable and _turntable.is_open:
+                try:
+                    _turntable.write(b"LAS:ENA\n" if enable else b"LAS:DIS\n")
+                except Exception:
+                    pass
 
     t_start = time.monotonic()
     last_rc = 0
@@ -536,11 +646,36 @@ async def _run_plan_task(plan_name: str, plan_path: Path):
             if _stop_requested:
                 break
             if seg_type == "robot":
+                if not is_parallel:
+                    # Build per-segment laser callback capturing this seg_data
+                    async def _laser_cb(text, _seg=seg_data):
+                        if "[STEP_START]" not in text:
+                            return
+                        try:
+                            idx = int(text.split("[STEP_START]")[1].strip().split()[0])
+                        except (ValueError, IndexError):
+                            return
+                        if idx < len(_seg):
+                            step = _seg[idx]
+                            if step.get("with_laser", False):
+                                delay = float(step.get("laser_delay", 0.0))
+                                if delay > 0:
+                                    await asyncio.sleep(delay)
+                                _laser(True)
+                            else:
+                                _laser(False)
+                    cb = _laser_cb
+                else:
+                    cb = tt_step_callback
                 last_rc = await _run_robot_segment(
-                    seg_data, plan_data, use_single_pass, on_line=tt_step_callback
+                    seg_data, plan_data, use_single_pass, on_line=cb
                 )
-            else:
+                if not is_parallel:
+                    _laser(False)
+            elif seg_type == "turntable":
                 await _run_turntable_segment(seg_data)
+            elif seg_type == "laser":
+                await _run_laser_segment(seg_data)
         if _stop_requested or not should_loop:
             break
 
@@ -601,25 +736,53 @@ async def _run_turntable_segment(seg_data: dict):
     direction = seg_data.get("direction", "CW")
     speed_us = int(seg_data.get("speed_us", 500))
     duration = float(seg_data.get("duration", 1.0))
+    with_laser = seg_data.get("with_laser", False)
 
     if _turntable is None or not _turntable.is_open:
         await _broadcast("[WARN] Turntable not connected — skipping step\n")
         return
 
-    await _broadcast(f"Turntable: {direction} · {speed_us} μs · {duration:.1f}s\n")
+    laser_tag = " + Laser" if with_laser else ""
+    await _broadcast(f"Turntable{laser_tag}: {direction} · {speed_us} μs · {duration:.1f}s\n")
     try:
         _turntable.write(b"ENABLE\n")
         await asyncio.sleep(0.05)
         _turntable.write(f"DIR:{direction}\n".encode())
         await asyncio.sleep(0.05)
         _turntable.write(f"SPEED:{speed_us}\n".encode())
+        if with_laser:
+            await asyncio.sleep(0.05)
+            _turntable.write(b"LAS:ENA\n")
         elapsed = 0.0
         while elapsed < duration and not _stop_requested:
             await asyncio.sleep(0.1)
             elapsed += 0.1
         _turntable.write(b"DISABLE\n")
+        if with_laser:
+            await asyncio.sleep(0.05)
+            _turntable.write(b"LAS:DIS\n")
     except Exception as e:
         await _broadcast(f"[WARN] Turntable error: {e}\n")
+
+
+async def _run_laser_segment(seg_data: dict):
+    global _stop_requested
+    duration = float(seg_data.get("duration", 1.0))
+
+    if _turntable is None or not _turntable.is_open:
+        await _broadcast("[WARN] Turntable/laser not connected — skipping laser step\n")
+        return
+
+    await _broadcast(f"Laser: {duration:.1f}s\n")
+    try:
+        _turntable.write(b"LAS:ENA\n")
+        elapsed = 0.0
+        while elapsed < duration and not _stop_requested:
+            await asyncio.sleep(0.1)
+            elapsed += 0.1
+        _turntable.write(b"LAS:DIS\n")
+    except Exception as e:
+        await _broadcast(f"[WARN] Laser error: {e}\n")
 
 @app.post("/api/robot/stop")
 async def robot_stop():
@@ -659,6 +822,28 @@ async def robot_disconnect():
 async def robot_status():
     running = _active_plan is not None
     return {"connected": _connected, "running": running, "active_plan": _active_plan}
+
+@app.post("/api/robot/capture_pose")
+async def capture_pose():
+    """Return current TCP pose (base frame) as [x,y,z,rx,ry,rz] via daemon."""
+    global _pose_event, _pose_result
+    if not _connected:
+        raise HTTPException(409, "Robot not connected")
+    _pose_event = asyncio.Event()
+    _pose_result = None
+    ok = await _drfl_send({"cmd": "capture_pose"})
+    if not ok:
+        _pose_event = None
+        raise HTTPException(503, "Daemon not available")
+    try:
+        await asyncio.wait_for(_pose_event.wait(), timeout=5.0)
+    except asyncio.TimeoutError:
+        _pose_event = None
+        raise HTTPException(504, "Pose capture timeout")
+    _pose_event = None
+    if _pose_result is None or len(_pose_result) != 6:
+        raise HTTPException(500, "Invalid pose data from daemon")
+    return {"pos": _pose_result}
 
 # ── hand-teach ─────────────────────────────────────────────────────────────
 
@@ -791,6 +976,7 @@ async def turntable_status():
         "speed": _tt_speed,
         "pending_port": _tt_pending_port,
         "rejected_ports": sorted(_tt_rejected_ports),
+        "emg_state": _emg_state,
     }
 
 class TurntableConfirmBody(BaseModel):

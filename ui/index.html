@@ -319,11 +319,12 @@
                 <tr class="text-dim text-[10px] font-semibold uppercase tracking-wider border-b border-chrome">
                   <th class="pb-2.5 text-left w-8 font-semibold">#</th>
                   <th class="pb-2.5 text-left w-20 font-semibold">Type</th>
-                  <th class="pb-2.5 text-left font-semibold">Position <span class="normal-case tracking-normal font-normal text-dim">(MoveL: X/Y/Z mm, A/B/C deg · MoveJ: J1–J6 deg)</span></th>
+                  <th class="pb-2.5 text-left font-semibold">Position <span class="normal-case tracking-normal font-normal text-dim">(MoveL: X/Y/Z mm, A/B/C deg · MoveJ: J1–J6 deg · WeldStraight: A→B dist · MoveC: arc/circle)</span></th>
                   <th class="pb-2.5 text-left w-16 font-semibold">Vel</th>
                   <th class="pb-2.5 text-left w-16 font-semibold">Acc</th>
                   <th class="pb-2.5 text-left w-16 font-semibold">Time</th>
                   <th class="pb-2.5 text-left w-16 font-semibold">Dir</th>
+                  <th class="pb-2.5 text-left w-12 font-semibold">Laser</th>
                 </tr>
               </thead>
               <tbody>
@@ -333,19 +334,21 @@
                     <td class="py-2.5 text-gray-400 text-xs font-mono" x-text="i + 1"></td>
                     <td class="py-2.5 pr-4">
                       <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium"
-                            :class="step.type === 'MoveJ' ? 'bg-blue-50 text-blue-700' : step.type === 'Turntable' ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' : 'bg-violet-50 text-violet-700'"
+                            :class="step.type === 'MoveJ' ? 'bg-blue-50 text-blue-700' : step.type === 'Turntable' ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' : step.type === 'WeldStraight' ? 'bg-orange-50 text-orange-700' : step.type === 'MoveC' ? 'bg-purple-50 text-purple-700' : step.type === 'Laser' ? 'bg-red-50 text-red-700' : 'bg-violet-50 text-violet-700'"
                             x-text="step.type"></span>
                     </td>
                     <td class="py-2.5 font-mono text-xs text-gray-700"
-                        x-text="step.type === 'Turntable' ? '' : step.pos.map(v => parseFloat(v).toFixed(1)).join(', ')"></td>
+                        x-text="step.type === 'Turntable' ? (step.direction + ' ' + step.speed_us + 'μs') : step.type === 'Laser' ? (step.duration + 's') : step.type === 'WeldStraight' ? (step.pos_a && step.pos_b ? step.pos_a.slice(0,3).map(v=>parseFloat(v).toFixed(0)).join(',') + ' → ' + step.pos_b.slice(0,3).map(v=>parseFloat(v).toFixed(0)).join(',') : '(incomplete)') : step.type === 'MoveC' ? (step.pos_start && step.pos_via ? 'A→B→C' + (step.angle2 == 360 ? ' full circle' : ' arc') : '(incomplete)') : (step.pos ? step.pos.map(v => parseFloat(v).toFixed(1)).join(', ') : '—')"></td>
                     <td class="py-2.5 text-xs text-dim font-mono"
-                        x-text="step.type === 'Turntable' ? step.speed_us : (step.vel != null ? parseFloat(Array.isArray(step.vel) ? step.vel[0] : step.vel).toFixed(1) : '—')"></td>
+                        x-text="step.type === 'Turntable' || step.type === 'Laser' ? '—' : (step.vel != null ? parseFloat(Array.isArray(step.vel) ? step.vel[0] : step.vel).toFixed(1) : '—')"></td>
                     <td class="py-2.5 text-xs text-dim font-mono"
-                        x-text="step.type === 'Turntable' ? '—' : (step.acc != null ? parseFloat(Array.isArray(step.acc) ? step.acc[0] : step.acc).toFixed(1) : '—')"></td>
+                        x-text="step.type === 'Turntable' || step.type === 'Laser' ? '—' : (step.acc != null ? parseFloat(Array.isArray(step.acc) ? step.acc[0] : step.acc).toFixed(1) : '—')"></td>
                     <td class="py-2.5 text-xs text-dim font-mono"
-                        x-text="step.type === 'Turntable' ? step.duration : (step.time != null ? parseFloat(step.time).toFixed(1) : '—')"></td>
+                        x-text="step.type === 'Turntable' || step.type === 'Laser' ? parseFloat(step.duration).toFixed(1) : (step.time != null ? parseFloat(step.time).toFixed(1) : '—')"></td>
                     <td class="py-2.5 text-xs text-dim font-mono"
                         x-text="step.type === 'Turntable' ? step.direction : '—'"></td>
+                    <td class="py-2.5 text-xs text-dim font-mono"
+                        x-text="step.with_laser ? '⚡' : '—'" :aria-label="step.with_laser ? 'laser on' : ''"></td>
                   </tr>
                 </template>
               </tbody>
@@ -510,6 +513,17 @@
            class="mt-8 flex items-start gap-2 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2.5">
         <span aria-hidden="true" class="flex-shrink-0">⚠</span>
         <span x-text="ttError"></span>
+      </div>
+
+      <!-- EMG indicator -->
+      <div x-show="ttEmgState !== null"
+           class="mt-4 flex items-center gap-2 rounded-lg px-3 py-2.5 text-xs font-semibold border transition-colors duration-200"
+           :class="ttEmgState === 0
+             ? 'bg-red-50 border-red-300 text-red-700'
+             : 'bg-green-50 border-green-200 text-green-700'">
+        <span class="w-2 h-2 rounded-full flex-shrink-0"
+              :class="ttEmgState === 0 ? 'bg-red-500 animate-pulse' : 'bg-green-500'"></span>
+        <span x-text="ttEmgState === 0 ? 'EMERGENCY STOP — button pressed' : 'Emergency cleared'"></span>
       </div>
     </div>
   </div>
@@ -936,6 +950,10 @@
                     class="focus-ring w-full py-2.5 text-sm font-semibold rounded-lg border border-chrome-input bg-surface-raised hover:bg-btn text-gray-700 transition-colors duration-150">
               + Add Turntable Step
             </button>
+            <button @click="addLaserStep()"
+                    class="focus-ring w-full py-2.5 text-sm font-semibold rounded-lg border border-chrome-input bg-surface-raised hover:bg-btn text-gray-700 transition-colors duration-150">
+              + Laser Step
+            </button>
           </div>
 
           <!-- Parallel mode note -->
@@ -1142,6 +1160,21 @@
           </div>
         </div>
 
+        <!-- Loop toggle -->
+        <div class="flex items-center justify-between">
+          <div>
+            <div class="text-xs font-medium text-gray-700">Loop plan</div>
+            <div class="text-[11px] text-dim mt-0.5">Repeat continuously until stopped</div>
+          </div>
+          <button @click="modalLoop = !modalLoop; markDirty()"
+                  class="focus-ring relative inline-flex h-5 w-9 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200"
+                  :class="modalLoop ? 'bg-accent-ui' : 'bg-gray-200'"
+                  role="switch" :aria-checked="modalLoop" aria-label="Loop plan">
+            <span class="pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transition-transform duration-200"
+                  :class="modalLoop ? 'translate-x-4' : 'translate-x-0'"></span>
+          </button>
+        </div>
+
         <!-- Mode notice -->
         <div x-show="modalTtParallel"
              class="flex items-center gap-2 px-3 py-2 rounded-lg bg-teal-50 border border-teal-200 text-xs text-teal-700 dark:bg-teal-900/20 dark:border-teal-700/50 dark:text-teal-400">
@@ -1183,7 +1216,10 @@
                           class="focus-ring bg-surface-input border border-chrome-input rounded-md pl-2.5 pr-7 py-1 text-sm font-mono text-gray-900 transition-colors duration-150">
                     <option>MoveJ</option>
                     <option>MoveL</option>
+                    <option>WeldStraight</option>
+                    <option>MoveC</option>
                     <option x-show="!modalTtParallel">Turntable</option>
+                    <option x-show="!modalTtParallel">Laser</option>
                   </select>
                   <button x-show="(planMode === 'handguide' && handGuideEnabled) || planMode === 'jog'"
                           @click="selectStep(i)"
@@ -1213,23 +1249,21 @@
                     Remove
                   </button>
                 </div>
-                <!-- Robot step fields -->
-                <template x-if="step.type !== 'Turntable'">
+                <!-- MoveJ / MoveL step fields -->
+                <template x-if="step.type === 'MoveJ' || step.type === 'MoveL'">
                   <div>
                     <div class="grid grid-cols-6 gap-1 mb-1">
                       <template x-for="(_, j) in [0,1,2,3,4,5]" :key="j">
                         <input type="number" step="any"
                                :placeholder="step.type === 'MoveJ' ? ['J1','J2','J3','J4','J5','J6'][j] : ['X','Y','Z','A','B','C'][j]"
-                               :aria-label="step.type === 'MoveJ'
-                                 ? (['J1','J2','J3','J4','J5','J6'][j] + '°, step ' + (i + 1))
-                                 : (j < 3 ? (['X','Y','Z'][j] + ' mm, step ' + (i + 1)) : (['A','B','C'][j - 3] + '°, step ' + (i + 1)))"
+                               :aria-label="step.type === 'MoveJ' ? (['J1','J2','J3','J4','J5','J6'][j] + '°, step ' + (i + 1)) : (j < 3 ? (['X','Y','Z'][j] + ' mm, step ' + (i + 1)) : (['A','B','C'][j - 3] + '°, step ' + (i + 1)))"
                                x-model.number="step.pos[j]" @change="markDirty()"
                                class="no-spinner focus-ring bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 w-full transition-colors duration-150" />
                       </template>
                     </div>
                     <div class="text-[10px] text-dim mb-2"
                          x-text="step.type === 'MoveJ' ? 'J1 – J6 (all degrees)' : 'X, Y, Z (mm) · A, B, C (degrees)'"></div>
-                    <div class="grid grid-cols-3 gap-2">
+                    <div class="grid grid-cols-4 gap-2 mb-2">
                       <div>
                         <label :for="'step-vel-' + i" class="block text-[11px] text-gray-500 mb-1">Vel</label>
                         <input :id="'step-vel-' + i" type="number" step="any" x-model.number="step.vel" @change="markDirty()"
@@ -1245,7 +1279,157 @@
                         <input :id="'step-time-' + i" type="number" step="any" x-model.number="step.time" @change="markDirty()"
                                class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
                       </div>
+                      <div>
+                        <label :for="'step-delay-' + i" class="block text-[11px] text-gray-500 mb-1">Delay (s)</label>
+                        <input :id="'step-delay-' + i" type="number" step="any" min="0" x-model.number="step.delay" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
                     </div>
+                    <label class="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="focus-ring rounded" />
+                      <span class="text-[11px] text-gray-600">Fire laser during this step</span>
+                    </label>
+                    <div x-show="step.with_laser" class="mt-1 flex items-baseline gap-1">
+                      <label :for="'step-ldel-' + i" class="text-[11px] text-gray-500">Laser delay</label>
+                      <input :id="'step-ldel-' + i" type="number" step="any" min="0" x-model.number="step.laser_delay" @change="markDirty()"
+                             class="no-spinner focus-ring w-16 bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      <span class="text-[11px] text-dim">s</span>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- WeldStraight step fields -->
+                <template x-if="step.type === 'WeldStraight'">
+                  <div class="space-y-2">
+                    <div>
+                      <div class="flex items-center justify-between mb-1">
+                        <span class="text-[11px] text-gray-500 font-medium">Point A (start)</span>
+                        <button @click="captureWeldPoint(step, 'pos_a')" :disabled="!connected"
+                                class="focus-ring text-xs px-2 py-0.5 rounded border border-chrome-input bg-surface-raised hover:bg-btn text-gray-700 disabled:opacity-40">
+                          Capture A
+                        </button>
+                      </div>
+                      <div class="grid grid-cols-6 gap-1">
+                        <template x-for="(_, j) in [0,1,2,3,4,5]" :key="j">
+                          <input type="number" step="any"
+                                 :placeholder="['X','Y','Z','A','B','C'][j]"
+                                 x-model.number="step.pos_a[j]" @change="markDirty()"
+                                 class="no-spinner focus-ring bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 w-full transition-colors duration-150" />
+                        </template>
+                      </div>
+                    </div>
+                    <div>
+                      <div class="flex items-center justify-between mb-1">
+                        <span class="text-[11px] text-gray-500 font-medium">Point B (end) <span class="text-dim" x-text="step.pos_a && step.pos_b ? '— ' + _computeWeldDistance(step.pos_a, step.pos_b) + ' mm' : ''"></span></span>
+                        <button @click="captureWeldPoint(step, 'pos_b')" :disabled="!connected"
+                                class="focus-ring text-xs px-2 py-0.5 rounded border border-chrome-input bg-surface-raised hover:bg-btn text-gray-700 disabled:opacity-40">
+                          Capture B
+                        </button>
+                      </div>
+                      <div class="grid grid-cols-6 gap-1">
+                        <template x-for="(_, j) in [0,1,2,3,4,5]" :key="j">
+                          <input type="number" step="any"
+                                 :placeholder="['X','Y','Z','A','B','C'][j]"
+                                 x-model.number="step.pos_b[j]" @change="markDirty()"
+                                 class="no-spinner focus-ring bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 w-full transition-colors duration-150" />
+                        </template>
+                      </div>
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                      <div>
+                        <label :for="'ws-vel-' + i" class="block text-[11px] text-gray-500 mb-1">Vel (weld)</label>
+                        <input :id="'ws-vel-' + i" type="number" step="any" x-model.number="step.vel" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                      <div>
+                        <label :for="'ws-acc-' + i" class="block text-[11px] text-gray-500 mb-1">Acc</label>
+                        <input :id="'ws-acc-' + i" type="number" step="any" x-model.number="step.acc" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                      <div>
+                        <label :for="'ws-time-' + i" class="block text-[11px] text-gray-500 mb-1">Time (s)</label>
+                        <input :id="'ws-time-' + i" type="number" step="any" x-model.number="step.time" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                    </div>
+                    <label class="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="focus-ring rounded" />
+                      <span class="text-[11px] text-gray-600">Fire laser during weld</span>
+                    </label>
+                    <div x-show="step.with_laser" class="flex items-baseline gap-1">
+                      <label :for="'ws-ldel-' + i" class="text-[11px] text-gray-500">Laser delay</label>
+                      <input :id="'ws-ldel-' + i" type="number" step="any" min="0" x-model.number="step.laser_delay" @change="markDirty()"
+                             class="no-spinner focus-ring w-16 bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      <span class="text-[11px] text-dim">s</span>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- MoveC step fields -->
+                <template x-if="step.type === 'MoveC'">
+                  <div class="space-y-2">
+                    <template x-for="(field, fi) in ['pos_start','pos_via','pos_end']" :key="fi">
+                      <div>
+                        <div class="flex items-center justify-between mb-1">
+                          <span class="text-[11px] text-gray-500 font-medium" x-text="['A (start)','B (via)','C (end)'][fi]"></span>
+                          <button @click="captureCirclePoint(step, field)" :disabled="!connected"
+                                  class="focus-ring text-xs px-2 py-0.5 rounded border border-chrome-input bg-surface-raised hover:bg-btn text-gray-700 disabled:opacity-40"
+                                  x-text="'Capture ' + ['A','B','C'][fi]">
+                          </button>
+                        </div>
+                        <div class="grid grid-cols-6 gap-1">
+                          <template x-for="(_, j) in [0,1,2,3,4,5]" :key="j">
+                            <input type="number" step="any"
+                                   :placeholder="['X','Y','Z','A','B','C'][j]"
+                                   :value="step[field] ? step[field][j] : ''"
+                                   @change="if (!step[field]) step[field] = [0,0,0,0,0,0]; step[field][j] = parseFloat($event.target.value) || 0; markDirty()"
+                                   class="no-spinner focus-ring bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 w-full transition-colors duration-150" />
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+                    <div class="grid grid-cols-4 gap-2">
+                      <div>
+                        <label :for="'mc-vel-' + i" class="block text-[11px] text-gray-500 mb-1">Vel</label>
+                        <input :id="'mc-vel-' + i" type="number" step="any" x-model.number="step.vel" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                      <div>
+                        <label :for="'mc-acc-' + i" class="block text-[11px] text-gray-500 mb-1">Acc</label>
+                        <input :id="'mc-acc-' + i" type="number" step="any" x-model.number="step.acc" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                      <div>
+                        <label :for="'mc-time-' + i" class="block text-[11px] text-gray-500 mb-1">Time (s)</label>
+                        <input :id="'mc-time-' + i" type="number" step="any" x-model.number="step.time" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                      <div>
+                        <label :for="'mc-ang-' + i" class="block text-[11px] text-gray-500 mb-1">Angle2 (360=full)</label>
+                        <input :id="'mc-ang-' + i" type="number" step="any" x-model.number="step.angle2" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                    </div>
+                    <label class="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="focus-ring rounded" />
+                      <span class="text-[11px] text-gray-600">Fire laser during arc</span>
+                    </label>
+                    <div x-show="step.with_laser" class="flex items-baseline gap-1">
+                      <label :for="'mc-ldel-' + i" class="text-[11px] text-gray-500">Laser delay</label>
+                      <input :id="'mc-ldel-' + i" type="number" step="any" min="0" x-model.number="step.laser_delay" @change="markDirty()"
+                             class="no-spinner focus-ring w-16 bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      <span class="text-[11px] text-dim">s</span>
+                    </div>
+                  </div>
+                </template>
+
+                <!-- Laser step fields -->
+                <template x-if="step.type === 'Laser'">
+                  <div class="flex items-baseline gap-2">
+                    <label :for="'las-dur-' + i" class="text-[11px] text-gray-500">Duration</label>
+                    <input :id="'las-dur-' + i" type="number" min="0.1" step="0.1" x-model.number="step.duration" @change="markDirty()"
+                           class="no-spinner focus-ring w-20 bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                    <span class="text-[11px] text-dim">s</span>
                   </div>
                 </template>
 
@@ -1282,6 +1466,10 @@
                         <span class="text-[11px] text-dim">s</span>
                       </div>
                     </div>
+                    <label class="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="focus-ring rounded" />
+                      <span class="text-[11px] text-gray-600">Fire laser while turntable spins</span>
+                    </label>
                   </div>
                 </template>
               </div>
@@ -1389,6 +1577,29 @@
                   :class="ttDetectLoading ? 'opacity-60 cursor-not-allowed' : ''"
                   x-text="ttDetectLoading ? 'Connecting…' : (ttNeedsSudo ? 'Connect with sudo' : 'Connect')">
           </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Emergency Stop Overlay ── -->
+  <div x-show="ttEmgState === 0" x-cloak
+       class="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[100]"
+       role="alertdialog" aria-modal="true" aria-labelledby="emg-title" aria-describedby="emg-desc">
+    <div class="bg-surface-raised rounded-xl w-full max-w-sm mx-4 shadow-modal border-2 border-red-500">
+      <div class="flex flex-col items-center gap-4 px-6 py-8 text-center">
+        <div class="w-16 h-16 rounded-full bg-red-100 flex items-center justify-center flex-shrink-0" aria-hidden="true">
+          <svg class="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z"/>
+          </svg>
+        </div>
+        <div>
+          <h2 id="emg-title" class="text-lg font-bold text-red-600">Emergency Stop Active</h2>
+          <p id="emg-desc" class="text-sm text-gray-600 mt-1.5">All motion has been halted.<br>Release the emergency button to resume.</p>
+        </div>
+        <div class="flex items-center gap-2 px-4 py-2 rounded-full bg-red-50 border border-red-200">
+          <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" aria-hidden="true"></span>
+          <span class="text-xs font-medium text-red-700">Waiting for button release…</span>
         </div>
       </div>
     </div>
