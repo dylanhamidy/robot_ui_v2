@@ -20,7 +20,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <cmath>
 #include <condition_variable>
 #include <cstring>
 #include <ctime>
@@ -186,72 +185,6 @@ static bool httpPost(const std::string& url, const std::string& body) {
     return res == CURLE_OK;
 }
 
-// ── Circle geometry helpers ───────────────────────────────────────────────────
-
-static void cross3(const float a[3], const float b[3], float out[3]) {
-    out[0] = a[1]*b[2] - a[2]*b[1];
-    out[1] = a[2]*b[0] - a[0]*b[2];
-    out[2] = a[0]*b[1] - a[1]*b[0];
-}
-
-static float dot3(const float a[3], const float b[3]) {
-    return a[0]*b[0] + a[1]*b[1] + a[2]*b[2];
-}
-
-static void normalize3(float v[3]) {
-    float mag = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
-    if (mag > 1e-9f) { v[0] /= mag; v[1] /= mag; v[2] /= mag; }
-}
-
-// Circumcenter of triangle p1/p2/p3 in 3D (only XYZ components used)
-static void circumcenter3d(const float p1[6], const float p2[6], const float p3[6], float out[3]) {
-    float ab[3], ac[3], n[3], cross_ac_n[3], cross_n_ab[3];
-    for (int i = 0; i < 3; i++) { ab[i] = p2[i] - p1[i]; ac[i] = p3[i] - p1[i]; }
-    cross3(ab, ac, n);
-    float n2 = dot3(n, n);
-    if (n2 < 1e-10f) { for (int i = 0; i < 3; i++) out[i] = p1[i]; return; }
-    float ab2 = dot3(ab, ab), ac2 = dot3(ac, ac);
-    cross3(ac, n, cross_ac_n);
-    cross3(n, ab, cross_n_ab);
-    for (int i = 0; i < 3; i++)
-        out[i] = p1[i] + (ab2/2.f * cross_ac_n[i] + ac2/2.f * cross_n_ab[i]) / n2;
-}
-
-// Rodrigues rotation of v around axis by theta_deg
-static void rotateVec(const float v[3], const float axis[3], float theta_deg, float out[3]) {
-    float k[3] = {axis[0], axis[1], axis[2]};
-    normalize3(k);
-    float theta = theta_deg * static_cast<float>(M_PI) / 180.f;
-    float cos_t = std::cos(theta), sin_t = std::sin(theta);
-    float kdotv = dot3(k, v);
-    float kxv[3];
-    cross3(k, v, kxv);
-    for (int i = 0; i < 3; i++)
-        out[i] = v[i]*cos_t + kxv[i]*sin_t + k[i]*kdotv*(1.f - cos_t);
-}
-
-// Compute D (~300°) — midpoint of return arc C→D→A for a full circle.
-// pos_a/b/c are 6DOF poses; d_out gets 6DOF result (orientation copied from pos_a).
-static void computeReturnVia(const float pos_a[6], const float pos_b[6],
-                              const float pos_c[6], float d_out[6]) {
-    float center[3];
-    circumcenter3d(pos_a, pos_b, pos_c, center);
-
-    float ab[3], ac[3], normal[3];
-    for (int i = 0; i < 3; i++) { ab[i] = pos_b[i] - pos_a[i]; ac[i] = pos_c[i] - pos_a[i]; }
-    cross3(ab, ac, normal);
-    normalize3(normal);
-
-    float vc[3];
-    for (int i = 0; i < 3; i++) vc[i] = pos_c[i] - center[i];
-
-    float d_rel[3];
-    rotateVec(vc, normal, 60.f, d_rel);
-
-    for (int i = 0; i < 3; i++) d_out[i] = center[i] + d_rel[i];
-    for (int i = 3; i < 6; i++) d_out[i] = pos_a[i];  // keep A's orientation at D
-}
-
 // ── Motion helpers ────────────────────────────────────────────────────────────
 
 static bool waitForStandby(int timeout_ms = 30000) {
@@ -306,16 +239,13 @@ static bool execStep(const json& step, int stepIdx) {
             if (aa.is_array()) { acc2[0] = aa[0].get<float>(); acc2[1] = aa[1].get<float>(); }
             else                { acc2[0] = acc2[1] = aa.get<float>(); }
         }
-        float time_s = step.value("time", 0.f);
-        bool full_circle = (step.value("angle2", 0.f) == 360.f);
+        float time_s  = step.value("time", 0.f);
+        float angle2  = step.value("angle2", 0.f);
 
-        {
-            ROBOT_STATE st = g_robot.get_robot_state();
-            emit("[INFO] MoveC step " + std::to_string(stepIdx) +
-                 ": approach A=[" + std::to_string(pos_start[0]) + "," +
-                 std::to_string(pos_start[1]) + "," + std::to_string(pos_start[2]) + "]" +
-                 " robot_state=" + std::to_string((int)st));
-        }
+        emit("[INFO] MoveC step " + std::to_string(stepIdx) +
+             ": approach A=[" + std::to_string(pos_start[0]) + "," +
+             std::to_string(pos_start[1]) + "," + std::to_string(pos_start[2]) + "]"
+             " angle2=" + std::to_string(angle2));
 
         // Phase 1: fast approach to A
         float fv[2] = {100.f, 100.f}, fa[2] = {100.f, 100.f};
@@ -331,30 +261,16 @@ static bool execStep(const json& step, int stepIdx) {
         // [STEP_START] emitted here — after approach, laser fires at arc start
         emit("[STEP_START] " + std::to_string(stepIdx));
 
-        // Build arc 1: via=B, end=C
-        float arc1[2][NUM_TASK];
-        for (int i = 0; i < NUM_TASK; i++) arc1[0][i] = pos_via[i];
-        for (int i = 0; i < NUM_TASK; i++) arc1[1][i] = pos_end[i];
+        // Single movec call — fTargetAngle2=360 for full circle, 0 for partial arc
+        float arc[2][NUM_TASK];
+        for (int i = 0; i < NUM_TASK; i++) arc[0][i] = pos_via[i];
+        for (int i = 0; i < NUM_TASK; i++) arc[1][i] = pos_end[i];
 
-        if (full_circle) {
-            float d_point[6];
-            computeReturnVia(pos_start, pos_via, pos_end, d_point);
-
-            float arc2[2][NUM_TASK];
-            for (int i = 0; i < NUM_TASK; i++) arc2[0][i] = d_point[i];
-            for (int i = 0; i < NUM_TASK; i++) arc2[1][i] = pos_start[i];
-
-            emit("[INFO] MoveC full-circle: arc1 A→B→C then arc2 C→D→A seamless");
-            g_robot.amovec(arc1, vel2, acc2, time_s,
-                           MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE);
-            g_robot.movec(arc2,  vel2, acc2, time_s,
-                          MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE);
-        } else {
-            emit("[INFO] MoveC arc: A→B→C");
-            bool arc_ok = g_robot.movec(arc1, vel2, acc2, time_s,
-                                        MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE);
-            emit("[INFO] MoveC movec returned " + std::string(arc_ok ? "true" : "false"));
-        }
+        emit("[INFO] MoveC arc: angle2=" + std::to_string(angle2));
+        bool arc_ok = g_robot.movec(arc, vel2, acc2, time_s,
+                                    MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE,
+                                    0.f, angle2);
+        emit("[INFO] MoveC movec returned " + std::string(arc_ok ? "true" : "false"));
         if (!waitForStandby()) {
             emit("[ERROR] MoveC arc waitForStandby failed");
             return false;
@@ -762,7 +678,6 @@ int main(int argc, char** argv) {
         if (!strcmp(argv[i], "--port") && i + 1 < argc) port = std::stoi(argv[++i]);
         // --drcf handled via DRCF_VERSION compile definition
     }
-    g_robot_ip = ip;
 
     std::signal(SIGINT,  sigHandler);
     std::signal(SIGTERM, sigHandler);
