@@ -79,6 +79,8 @@ function app() {
     // WeldStraight/MoveC capture state
     weldCapturing: null,
     circleCapturing: null,
+    freefromCapturing: null,
+    freefromCaptureTarget: null,
 
     // Jog
     jogReference: 0,
@@ -198,6 +200,9 @@ function app() {
             if (this.handGuideEnabled) {
               if (this.captureType === 'WeldStraight' || this.captureType === 'MoveC') {
                 this.recordPendingPoint();
+              } else if (this.freefromCaptureTarget) {
+                const { stepIdx, subIdx, field } = this.freefromCaptureTarget;
+                this.captureFreeFormPos(stepIdx, subIdx, field);
               } else {
                 this.recordPoint();
               }
@@ -370,6 +375,15 @@ function app() {
             with_laser: s.with_laser || false,
             laser_delay: s.laser_delay ?? 0,
             enabled: s.enabled !== false,
+          };
+        }
+        if (s.type === "FreeForm") {
+          return {
+            type: "FreeForm",
+            with_laser: s.with_laser || false,
+            laser_delay: s.laser_delay ?? 0,
+            enabled: s.enabled !== false,
+            sub_steps: (s.sub_steps || []).map(ss => ({ ...ss })),
           };
         }
         return {
@@ -561,31 +575,37 @@ function app() {
       const clearTt = () => { delete step.direction; delete step.speed_us; delete step.duration; delete step.with_laser; };
       const clearWeld = () => { delete step.pos_a; delete step.pos_b; delete step.with_laser; delete step.laser_delay; delete step.vel; delete step.acc; delete step.time; };
       const clearCircle = () => { delete step.pos_start; delete step.pos_via; delete step.pos_end; delete step.angle2; delete step.with_laser; delete step.laser_delay; delete step.vel; delete step.acc; delete step.time; };
+      const clearFreeForm = () => { delete step.sub_steps; };
 
       if (step.type === "Turntable") {
-        clearRobot(); clearWeld(); clearCircle();
+        clearRobot(); clearWeld(); clearCircle(); clearFreeForm();
         step.direction = this.modalTtDirection || "CW";
         step.speed_us = this.modalTtSpeedDelay || 500;
         step.duration = this.modalTtDuration || 3.0;
         step.with_laser = false;
       } else if (step.type === "Laser") {
-        clearRobot(); clearTt(); clearWeld(); clearCircle();
+        clearRobot(); clearTt(); clearWeld(); clearCircle(); clearFreeForm();
         step.duration = 1.0;
       } else if (step.type === "WeldStraight") {
-        clearTt(); clearCircle();
+        clearTt(); clearCircle(); clearFreeForm();
         delete step.pos; delete step.delay; delete step.with_turntable;
         step.pos_a = null;
         step.pos_b = null;
         step.vel = 10; step.acc = 10; step.time = 0;
         step.with_laser = false; step.laser_delay = 0;
       } else if (step.type === "MoveC") {
-        clearTt(); clearWeld();
+        clearTt(); clearWeld(); clearFreeForm();
         delete step.pos; delete step.delay; delete step.with_turntable;
         step.pos_start = null; step.pos_via = null; step.pos_end = null;
         step.vel = 50; step.acc = 100; step.time = 0; step.angle2 = 0;
         step.with_laser = false; step.laser_delay = 0;
-      } else {
+      } else if (step.type === "FreeForm") {
         clearTt(); clearWeld(); clearCircle();
+        delete step.pos; delete step.delay; delete step.with_turntable;
+        step.sub_steps = [];
+        step.with_laser = false; step.laser_delay = 0;
+      } else {
+        clearTt(); clearWeld(); clearCircle(); clearFreeForm();
         step.pos = [0, 0, 0, 0, 0, 0];
         step.vel = 30; step.acc = 30; step.time = 2; step.delay = 0;
         step.with_laser = false; step.laser_delay = 0;
@@ -691,6 +711,41 @@ function app() {
             with_laser: s.with_laser || false,
             laser_delay: Number(s.laser_delay) || 0,
             enabled: s.enabled !== false,
+          };
+        }
+        if (s.type === "FreeForm") {
+          return {
+            type: "FreeForm",
+            with_laser: s.with_laser || false,
+            laser_delay: Number(s.laser_delay) || 0,
+            enabled: s.enabled !== false,
+            sub_steps: (s.sub_steps || []).map(ss => {
+              if (ss.type === "MoveL") {
+                const v = Number(ss.vel) || 30;
+                const a = Number(ss.acc) || 30;
+                return {
+                  type: "MoveL",
+                  pos: (ss.pos || [0,0,0,0,0,0]).map(Number),
+                  vel: [v, v], acc: [a, a],
+                  time: Number(ss.time) || 0,
+                  with_laser: ss.with_laser || false,
+                };
+              }
+              if (ss.type === "MoveC") {
+                const v = Number(ss.vel) || 30;
+                const a = Number(ss.acc) || 30;
+                return {
+                  type: "MoveC",
+                  pos_via: (ss.pos_via || [0,0,0,0,0,0]).map(Number),
+                  pos_end: (ss.pos_end || [0,0,0,0,0,0]).map(Number),
+                  vel: [v, v], acc: [a, a],
+                  time: Number(ss.time) || 0,
+                  angle2: Number(ss.angle2) || 0,
+                  with_laser: ss.with_laser || false,
+                };
+              }
+              return ss;
+            }),
           };
         }
         const step = { type: s.type, pos: s.pos.map(Number) };
@@ -917,6 +972,7 @@ function app() {
       this.pendingCirclePos = { pos_start: null, pos_via: null, pos_end: null };
       this.weldCaptureTarget = 'a';
       this.circleCaptureTarget = 'a';
+      this.freefromCaptureTarget = null;
     },
 
     async recordPendingPoint() {
@@ -1051,6 +1107,48 @@ function app() {
         this.markDirty();
       } finally {
         this.circleCapturing = null;
+      }
+    },
+
+    addFreeFormSubStep(stepIdx, type) {
+      const step = this.modalSteps[stepIdx];
+      if (!step) return;
+      if (type === "MoveL") {
+        step.sub_steps.push({ type: "MoveL", pos: [0,0,0,0,0,0], vel: 30, acc: 30, time: 0, with_laser: false });
+      } else if (type === "MoveC") {
+        step.sub_steps.push({ type: "MoveC", pos_via: [0,0,0,0,0,0], pos_end: [0,0,0,0,0,0], vel: 30, acc: 30, time: 0, angle2: 0, with_laser: false });
+      }
+      this.modalSteps[stepIdx] = { ...step };
+      this.markDirty();
+    },
+
+    removeFreeFormSubStep(stepIdx, subIdx) {
+      const step = this.modalSteps[stepIdx];
+      if (!step) return;
+      step.sub_steps.splice(subIdx, 1);
+      this.modalSteps[stepIdx] = { ...step };
+      this.markDirty();
+    },
+
+    async captureFreeFormPos(stepIdx, subIdx, field) {
+      const key = `${stepIdx}-${subIdx}-${field}`;
+      this.freefromCapturing = key;
+      this.freefromCaptureTarget = { stepIdx, subIdx, field };
+      try {
+        const r = await fetch("/api/robot/capture_pose", { method: "POST" });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          this.termLines.push({ text: `[ERROR] Capture failed: ${err.detail || r.status}`, type: "sentinel-error" });
+          return;
+        }
+        const { pos } = await r.json();
+        const step = this.modalSteps[stepIdx];
+        if (!step || !step.sub_steps[subIdx]) return;
+        step.sub_steps[subIdx][field] = pos;
+        this.modalSteps[stepIdx] = { ...step };
+        this.markDirty();
+      } finally {
+        this.freefromCapturing = null;
       }
     },
 

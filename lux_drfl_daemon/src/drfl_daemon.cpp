@@ -314,6 +314,74 @@ static bool execStep(const json& step, int stepIdx) {
         return true;
     }
 
+    if (type == "FreeForm") {
+        auto sub_steps = step.value("sub_steps", json::array());
+        emit("[STEP_START] " + std::to_string(stepIdx));
+
+        for (const auto& ss : sub_steps) {
+            if (g_cancel || g_shutdown) return false;
+            std::string sstype = ss.value("type", "MoveL");
+
+            if (sstype == "MoveL") {
+                auto arr = ss.value("pos", json::array());
+                if (arr.size() < 6) { emit("[ERROR] FreeForm MoveL: missing pos[6]"); return false; }
+                float pos[NUM_TASK];
+                for (int k = 0; k < NUM_TASK; k++) pos[k] = arr[k].get<float>();
+
+                float vel2[2] = {30.f, 30.f}, acc2[2] = {30.f, 30.f};
+                if (ss.contains("vel")) {
+                    const auto& vv = ss["vel"];
+                    if (vv.is_array()) { vel2[0] = vv[0].get<float>(); vel2[1] = vv[1].get<float>(); }
+                    else               { vel2[0] = vel2[1] = vv.get<float>(); }
+                }
+                if (ss.contains("acc")) {
+                    const auto& aa = ss["acc"];
+                    if (aa.is_array()) { acc2[0] = aa[0].get<float>(); acc2[1] = aa[1].get<float>(); }
+                    else               { acc2[0] = acc2[1] = aa.get<float>(); }
+                }
+                float t = ss.value("time", 0.f);
+                g_robot.amovel(pos, vel2, acc2, t, MOVE_MODE_ABSOLUTE,
+                               MOVE_REFERENCE_BASE, 0.f, BLENDING_SPEED_TYPE_DUPLICATE);
+
+            } else if (sstype == "MoveC") {
+                auto parse6 = [](const json& j, float out[6]) {
+                    for (int k = 0; k < 6; k++) out[k] = j[k].get<float>();
+                };
+                float pos_via[6], pos_end[6];
+                parse6(ss["pos_via"], pos_via);
+                parse6(ss["pos_end"], pos_end);
+
+                float vel2[2] = {30.f, 30.f}, acc2[2] = {30.f, 30.f};
+                if (ss.contains("vel")) {
+                    const auto& vv = ss["vel"];
+                    if (vv.is_array()) { vel2[0] = vv[0].get<float>(); vel2[1] = vv[1].get<float>(); }
+                    else               { vel2[0] = vel2[1] = vv.get<float>(); }
+                }
+                if (ss.contains("acc")) {
+                    const auto& aa = ss["acc"];
+                    if (aa.is_array()) { acc2[0] = aa[0].get<float>(); acc2[1] = aa[1].get<float>(); }
+                    else               { acc2[0] = acc2[1] = aa.get<float>(); }
+                }
+                float t  = ss.value("time", 0.f);
+                float a2 = ss.value("angle2", 0.f);
+
+                float arc[2][NUM_TASK];
+                for (int k = 0; k < NUM_TASK; k++) arc[0][k] = pos_via[k];
+                for (int k = 0; k < NUM_TASK; k++) arc[1][k] = pos_end[k];
+
+                g_robot.amovec(arc, vel2, acc2, t,
+                               MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, a2, 0.f);
+            }
+        }
+
+        if (!waitForStandby()) {
+            emit("[ERROR] FreeForm waitForStandby failed");
+            return false;
+        }
+        emit("[INFO] FreeForm step " + std::to_string(stepIdx) + " complete");
+        return true;
+    }
+
     auto arr = step.value("pos", json::array());
     if (arr.size() < 6) {
         emit("[ERROR] step missing pos[6]");
@@ -382,7 +450,7 @@ static void planWorker(json steps, bool single_pass, bool loop) {
             // MoveC and WeldStraight emit [STEP_START] themselves after the approach
             // phase so the laser fires at arc/weld start, not during the fast approach.
             std::string stype = steps[i].value("type", "MoveJ");
-            if (stype != "MoveC" && stype != "WeldStraight")
+            if (stype != "MoveC" && stype != "WeldStraight" && stype != "FreeForm")
                 emit("[STEP_START] " + std::to_string(i));
             bool ok = execStep(steps[i], i);
             if (!ok && !g_cancel && !g_shutdown) {

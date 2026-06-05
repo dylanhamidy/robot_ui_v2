@@ -167,6 +167,10 @@
     .dark .border-teal-200 { border-color: rgba(20, 184, 166, 0.35); }
     .dark .text-teal-700   { color: #2dd4bf; }
 
+    /* Cyan — FreeForm badge */
+    .dark .bg-cyan-50   { background-color: rgba(6, 182, 212, 0.10); }
+    .dark .text-cyan-700 { color: #22d3ee; }
+
     /* Purple — MoveC step badge */
     .dark .bg-purple-50    { background-color: rgba(168, 85, 247, 0.12); }
     .dark .text-purple-700 { color: #c084fc; }
@@ -371,11 +375,11 @@
                     <td class="py-2.5 text-gray-400 text-xs font-mono" x-text="i + 1"></td>
                     <td class="py-2.5 pr-4">
                       <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-mono font-medium"
-                            :class="step.type === 'MoveJ' ? 'bg-blue-50 text-blue-700' : step.type === 'Turntable' ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' : step.type === 'WeldStraight' ? 'bg-orange-50 text-orange-700' : step.type === 'MoveC' ? 'bg-purple-50 text-purple-700' : step.type === 'Laser' ? 'bg-red-50 text-red-700' : 'bg-violet-50 text-violet-700'"
+                            :class="step.type === 'MoveJ' ? 'bg-blue-50 text-blue-700' : step.type === 'Turntable' ? 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400' : step.type === 'WeldStraight' ? 'bg-orange-50 text-orange-700' : step.type === 'MoveC' ? 'bg-purple-50 text-purple-700' : step.type === 'Laser' ? 'bg-red-50 text-red-700' : step.type === 'FreeForm' ? 'bg-cyan-50 text-cyan-700' : 'bg-violet-50 text-violet-700'"
                             x-text="step.type"></span>
                     </td>
                     <td class="py-2.5 font-mono text-xs text-gray-700"
-                        x-text="step.type === 'Turntable' ? (step.direction + ' ' + step.speed_us + 'μs') : step.type === 'Laser' ? (step.duration + 's') : step.type === 'WeldStraight' ? (step.pos_a && step.pos_b ? step.pos_a.slice(0,3).map(v=>parseFloat(v).toFixed(0)).join(',') + ' → ' + step.pos_b.slice(0,3).map(v=>parseFloat(v).toFixed(0)).join(',') : '(incomplete)') : step.type === 'MoveC' ? (step.pos_start && step.pos_via ? 'A→B→C' + (step.angle2 == 360 ? ' full circle' : ' arc') : '(incomplete)') : (step.pos ? step.pos.map(v => parseFloat(v).toFixed(1)).join(', ') : '—')"></td>
+                        x-text="step.type === 'Turntable' ? (step.direction + ' ' + step.speed_us + 'μs') : step.type === 'Laser' ? (step.duration + 's') : step.type === 'WeldStraight' ? (step.pos_a && step.pos_b ? step.pos_a.slice(0,3).map(v=>parseFloat(v).toFixed(0)).join(',') + ' → ' + step.pos_b.slice(0,3).map(v=>parseFloat(v).toFixed(0)).join(',') : '(incomplete)') : step.type === 'MoveC' ? (step.pos_start && step.pos_via ? 'A→B→C' + (step.angle2 == 360 ? ' full circle' : ' arc') : '(incomplete)') : step.type === 'FreeForm' ? ((step.sub_steps ? step.sub_steps.length : 0) + ' sub-step' + (step.sub_steps && step.sub_steps.length !== 1 ? 's' : '')) : (step.pos ? step.pos.map(v => parseFloat(v).toFixed(1)).join(', ') : '—')"></td>
                     <td class="py-2.5 text-xs text-dim font-mono"
                         x-text="step.type === 'Turntable' || step.type === 'Laser' ? '—' : (step.vel != null ? parseFloat(Array.isArray(step.vel) ? step.vel[0] : step.vel).toFixed(1) : '—')"></td>
                     <td class="py-2.5 text-xs text-dim font-mono"
@@ -1440,6 +1444,7 @@
                     <option>MoveL</option>
                     <option>WeldStraight</option>
                     <option>MoveC</option>
+                    <option>FreeForm</option>
                     <option x-show="!modalTtParallel">Turntable</option>
                     <option x-show="!modalTtParallel">Laser</option>
                   </select>
@@ -1724,6 +1729,138 @@
                       <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="focus-ring rounded" />
                       <span class="text-[11px] text-gray-600">Fire laser while turntable spins</span>
                     </label>
+                  </div>
+                </template>
+
+                <!-- FreeForm step fields -->
+                <template x-if="step.type === 'FreeForm'">
+                  <div class="space-y-3">
+                    <div x-show="!jogModeEnabled"
+                         class="flex items-center gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <span aria-hidden="true">⚠</span>
+                      Enable Jog and position the robot at the sequence start before capturing sub-step positions.
+                    </div>
+                    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="rounded" />
+                      <span class="text-[11px] text-gray-600">Laser on for entire sequence</span>
+                    </label>
+                    <div x-show="step.with_laser" class="flex items-baseline gap-1">
+                      <label class="text-[11px] text-gray-500">Laser delay</label>
+                      <input type="number" step="any" min="0" x-model.number="step.laser_delay" @change="markDirty()"
+                             class="no-spinner focus-ring w-16 bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      <span class="text-[11px] text-dim">s</span>
+                    </div>
+                    <div class="rounded-lg border border-chrome bg-surface-input p-3 space-y-3">
+                      <div class="flex items-center justify-between">
+                        <span class="text-[10px] font-semibold uppercase tracking-widest text-dim">Sub-steps</span>
+                        <div class="flex gap-1.5">
+                          <button @click="addFreeFormSubStep(i, 'MoveL')"
+                                  class="focus-ring px-2.5 py-1 text-xs font-medium bg-btn hover:bg-btn text-gray-700 border border-chrome-input rounded-md transition-colors duration-150">
+                            + MoveL
+                          </button>
+                          <button @click="addFreeFormSubStep(i, 'MoveC')"
+                                  class="focus-ring px-2.5 py-1 text-xs font-medium bg-btn hover:bg-btn text-gray-700 border border-chrome-input rounded-md transition-colors duration-150">
+                            + MoveC
+                          </button>
+                        </div>
+                      </div>
+                      <div x-show="!step.sub_steps || step.sub_steps.length === 0" class="text-xs text-dim text-center py-3">
+                        No sub-steps yet — add MoveL or MoveC above.
+                      </div>
+                      <template x-for="(ss, si) in step.sub_steps" :key="si">
+                        <div class="rounded-lg border border-chrome bg-surface-base p-2.5 space-y-2">
+                          <div class="flex items-center gap-2">
+                            <span class="text-[10px] font-mono text-gray-400 w-4 flex-shrink-0" x-text="si + 1"></span>
+                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono font-medium"
+                                  :class="ss.type === 'MoveL' ? 'bg-violet-50 text-violet-700' : 'bg-purple-50 text-purple-700'"
+                                  x-text="ss.type"></span>
+                            <button @click="removeFreeFormSubStep(i, si)"
+                                    class="focus-ring ml-auto text-xs text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded transition-colors duration-150">
+                              Remove
+                            </button>
+                          </div>
+                          <!-- MoveL sub-step -->
+                          <template x-if="ss.type === 'MoveL'">
+                            <div class="space-y-2">
+                              <div class="flex items-center gap-2">
+                                <div class="font-mono text-[11px] text-gray-600 flex-1 min-w-0 truncate"
+                                     x-text="ss.pos && ss.pos.some(v => v !== 0) ? '[' + ss.pos.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + '] mm' : 'Not recorded'"></div>
+                                <button @click="captureFreeFormPos(i, si, 'pos')"
+                                        :disabled="!jogModeEnabled || freefromCapturing === i + '-' + si + '-pos'"
+                                        class="focus-ring flex-shrink-0 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors duration-150"
+                                        :class="ss.pos && ss.pos.some(v => v !== 0) ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-violet-600 hover:bg-violet-700 text-white'">
+                                  <span x-text="freefromCapturing === i + '-' + si + '-pos' ? 'Recording…' : (ss.pos && ss.pos.some(v => v !== 0) ? 'Re-record' : 'Record')"></span>
+                                </button>
+                              </div>
+                              <div class="grid grid-cols-3 gap-1.5">
+                                <div>
+                                  <label class="block text-[10px] text-gray-400 mb-0.5">Vel (mm/s)</label>
+                                  <input type="number" step="any" min="0.1" x-model.number="ss.vel" @change="markDirty()"
+                                         class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                                </div>
+                                <div>
+                                  <label class="block text-[10px] text-gray-400 mb-0.5">Acc (mm/s²)</label>
+                                  <input type="number" step="any" min="0.1" x-model.number="ss.acc" @change="markDirty()"
+                                         class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                                </div>
+                                <div>
+                                  <label class="block text-[10px] text-gray-400 mb-0.5">Time (s, 0=auto)</label>
+                                  <input type="number" step="any" min="0" x-model.number="ss.time" @change="markDirty()"
+                                         class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                                </div>
+                              </div>
+                            </div>
+                          </template>
+                          <!-- MoveC sub-step -->
+                          <template x-if="ss.type === 'MoveC'">
+                            <div class="space-y-2">
+                              <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                  <div class="text-[10px] text-dim mb-1">Via point</div>
+                                  <div class="font-mono text-[11px] text-gray-600 mb-1.5 min-h-[1.25rem]"
+                                       x-text="ss.pos_via ? '[' + ss.pos_via.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
+                                  <button @click="captureFreeFormPos(i, si, 'pos_via')"
+                                          :disabled="!jogModeEnabled || freefromCapturing === i + '-' + si + '-pos_via'"
+                                          class="focus-ring w-full py-1 text-xs font-semibold rounded-md transition-colors duration-150"
+                                          :class="ss.pos_via ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-purple-600 hover:bg-purple-700 text-white'">
+                                    <span x-text="freefromCapturing === i + '-' + si + '-pos_via' ? 'Recording…' : (ss.pos_via ? 'Re-record Via' : 'Record Via')"></span>
+                                  </button>
+                                </div>
+                                <div>
+                                  <div class="text-[10px] text-dim mb-1">End point</div>
+                                  <div class="font-mono text-[11px] text-gray-600 mb-1.5 min-h-[1.25rem]"
+                                       x-text="ss.pos_end ? '[' + ss.pos_end.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
+                                  <button @click="captureFreeFormPos(i, si, 'pos_end')"
+                                          :disabled="!jogModeEnabled || freefromCapturing === i + '-' + si + '-pos_end'"
+                                          class="focus-ring w-full py-1 text-xs font-semibold rounded-md transition-colors duration-150"
+                                          :class="ss.pos_end ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-purple-600 hover:bg-purple-700 text-white'">
+                                    <span x-text="freefromCapturing === i + '-' + si + '-pos_end' ? 'Recording…' : (ss.pos_end ? 'Re-record End' : 'Record End')"></span>
+                                  </button>
+                                </div>
+                              </div>
+                              <div class="grid grid-cols-3 gap-1.5">
+                                <div>
+                                  <label class="block text-[10px] text-gray-400 mb-0.5">Vel (mm/s)</label>
+                                  <input type="number" step="any" min="0.1" x-model.number="ss.vel" @change="markDirty()"
+                                         class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                                </div>
+                                <div>
+                                  <label class="block text-[10px] text-gray-400 mb-0.5">Acc (mm/s²)</label>
+                                  <input type="number" step="any" min="0.1" x-model.number="ss.acc" @change="markDirty()"
+                                         class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                                </div>
+                                <div>
+                                  <label class="block text-[10px] text-gray-400 mb-0.5">Angle2 (0=arc)</label>
+                                  <input type="number" step="any" min="0" x-model.number="ss.angle2" @change="markDirty()"
+                                         class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                                </div>
+                              </div>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                    <p class="text-[10px] text-dim leading-relaxed">Sub-steps execute seamlessly with no stop between. Robot must be positioned at sequence start via a preceding MoveJ/MoveL.</p>
                   </div>
                 </template>
               </div>
