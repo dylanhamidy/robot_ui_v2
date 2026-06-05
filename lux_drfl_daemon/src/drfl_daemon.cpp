@@ -521,7 +521,7 @@ static void cmdRunPlan(const json& cmd) {
 static void cmdStop() {
     g_cancel = true;
     try {
-        g_robot.MoveStop(STOP_TYPE_QUICK);
+        g_robot.stop(STOP_TYPE_QUICK);
     } catch (...) {}
 }
 
@@ -777,7 +777,7 @@ int main(int argc, char** argv) {
     g_robot.setup_monitoring_version(1);
 
     // Request exclusive access
-    g_robot.ManageAccessControl(MANAGE_ACCESS_CONTROL_FORCE_REQUEST);
+    g_robot.manage_access_control(MANAGE_ACCESS_CONTROL_FORCE_REQUEST);
 
     // Wait for access grant
     {
@@ -851,7 +851,7 @@ int main(int argc, char** argv) {
         // worker detached — MoveStop already sent by cmdStop() if called
     }
     try {
-        g_robot.MoveStop(STOP_TYPE_QUICK);
+        g_robot.stop(STOP_TYPE_QUICK);
     } catch (...) {}
     g_robot.close_connection();
     curl_global_cleanup();

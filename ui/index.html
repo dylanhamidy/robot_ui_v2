@@ -1300,126 +1300,158 @@
 
                 <!-- WeldStraight step fields -->
                 <template x-if="step.type === 'WeldStraight'">
-                  <div class="space-y-2">
-                    <div>
-                      <div class="flex items-center justify-between mb-1">
-                        <span class="text-[11px] text-gray-500 font-medium">Point A (start)</span>
-                        <button @click="captureWeldPoint(step, 'pos_a')" :disabled="!connected"
-                                class="focus-ring text-xs px-2 py-0.5 rounded border border-chrome-input bg-surface-raised hover:bg-btn text-gray-700 disabled:opacity-40">
-                          Capture A
+                  <div class="space-y-3">
+                    <div x-show="!jogModeEnabled"
+                         class="flex items-center gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <span aria-hidden="true">⚠</span>
+                      Enable Jog (Jog page) and position the robot before capturing weld points.
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <div class="rounded-lg border border-chrome bg-surface-input p-2.5 space-y-1.5">
+                        <div class="text-[10px] font-semibold text-dim uppercase tracking-widest">Point A — weld start</div>
+                        <div class="font-mono text-[11px] text-gray-600 min-h-[2rem] flex items-center"
+                             x-text="step.pos_a ? '[' + step.pos_a.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + '] mm' : 'Not recorded'"></div>
+                        <button @click="captureWeldPoint(i, 'a')"
+                                :disabled="!jogModeEnabled || weldCapturing === i + '-a'"
+                                class="focus-ring w-full py-1.5 text-xs font-semibold rounded-md transition-colors duration-150"
+                                :class="step.pos_a ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-rose-600 hover:bg-rose-700 text-white'"
+                                :aria-label="'Record Point A for step ' + (i + 1)">
+                          <span x-text="weldCapturing === i + '-a' ? 'Recording…' : (step.pos_a ? 'Re-record A' : 'Record A')"></span>
                         </button>
                       </div>
-                      <div class="grid grid-cols-6 gap-1">
-                        <template x-for="(_, j) in [0,1,2,3,4,5]" :key="j">
-                          <input type="number" step="any"
-                                 :placeholder="['X','Y','Z','A','B','C'][j]"
-                                 x-model.number="step.pos_a[j]" @change="markDirty()"
-                                 class="no-spinner focus-ring bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 w-full transition-colors duration-150" />
-                        </template>
+                      <div class="rounded-lg border border-chrome bg-surface-input p-2.5 space-y-1.5">
+                        <div class="text-[10px] font-semibold text-dim uppercase tracking-widest">Point B — weld end</div>
+                        <div class="font-mono text-[11px] text-gray-600 min-h-[2rem] flex items-center"
+                             x-text="step.pos_b ? '[' + step.pos_b.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + '] mm' : 'Not recorded'"></div>
+                        <button @click="captureWeldPoint(i, 'b')"
+                                :disabled="!jogModeEnabled || weldCapturing === i + '-b'"
+                                class="focus-ring w-full py-1.5 text-xs font-semibold rounded-md transition-colors duration-150"
+                                :class="step.pos_b ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-rose-600 hover:bg-rose-700 text-white'"
+                                :aria-label="'Record Point B for step ' + (i + 1)">
+                          <span x-text="weldCapturing === i + '-b' ? 'Recording…' : (step.pos_b ? 'Re-record B' : 'Record B')"></span>
+                        </button>
                       </div>
                     </div>
-                    <div>
-                      <div class="flex items-center justify-between mb-1">
-                        <span class="text-[11px] text-gray-500 font-medium">Point B (end) <span class="text-dim" x-text="step.pos_a && step.pos_b ? '— ' + _computeWeldDistance(step.pos_a, step.pos_b) + ' mm' : ''"></span></span>
-                        <button @click="captureWeldPoint(step, 'pos_b')" :disabled="!connected"
-                                class="focus-ring text-xs px-2 py-0.5 rounded border border-chrome-input bg-surface-raised hover:bg-btn text-gray-700 disabled:opacity-40">
-                          Capture B
-                        </button>
-                      </div>
-                      <div class="grid grid-cols-6 gap-1">
-                        <template x-for="(_, j) in [0,1,2,3,4,5]" :key="j">
-                          <input type="number" step="any"
-                                 :placeholder="['X','Y','Z','A','B','C'][j]"
-                                 x-model.number="step.pos_b[j]" @change="markDirty()"
-                                 class="no-spinner focus-ring bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 w-full transition-colors duration-150" />
-                        </template>
-                      </div>
+                    <div x-show="step.pos_a && step.pos_b"
+                         class="flex items-center gap-2 px-3 py-2 rounded-lg bg-rose-50 border border-rose-200 text-xs text-rose-700">
+                      <span class="font-semibold">Weld distance:</span>
+                      <span x-text="step.distance_mm != null ? parseFloat(step.distance_mm).toFixed(2) + ' mm' : 'calculating…'" class="font-mono"></span>
+                      <span class="text-rose-400 ml-auto text-[10px]">surface-projected, depth drift removed</span>
                     </div>
                     <div class="grid grid-cols-3 gap-2">
                       <div>
-                        <label :for="'ws-vel-' + i" class="block text-[11px] text-gray-500 mb-1">Vel (weld)</label>
-                        <input :id="'ws-vel-' + i" type="number" step="any" x-model.number="step.vel" @change="markDirty()"
+                        <label :for="'ws-vel-' + i" class="block text-[11px] text-gray-500 mb-1">Vel (mm/s)</label>
+                        <input :id="'ws-vel-' + i" type="number" step="any" min="0.1"
+                               x-model.number="step.vel" @change="markDirty()"
                                class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
                       </div>
                       <div>
-                        <label :for="'ws-acc-' + i" class="block text-[11px] text-gray-500 mb-1">Acc</label>
-                        <input :id="'ws-acc-' + i" type="number" step="any" x-model.number="step.acc" @change="markDirty()"
+                        <label :for="'ws-acc-' + i" class="block text-[11px] text-gray-500 mb-1">Acc (mm/s²)</label>
+                        <input :id="'ws-acc-' + i" type="number" step="any" min="0.1"
+                               x-model.number="step.acc" @change="markDirty()"
                                class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
                       </div>
                       <div>
-                        <label :for="'ws-time-' + i" class="block text-[11px] text-gray-500 mb-1">Time (s)</label>
-                        <input :id="'ws-time-' + i" type="number" step="any" x-model.number="step.time" @change="markDirty()"
+                        <label :for="'ws-time-' + i" class="block text-[11px] text-gray-500 mb-1">Time (s, 0=auto)</label>
+                        <input :id="'ws-time-' + i" type="number" step="any" min="0"
+                               x-model.number="step.time" @change="markDirty()"
                                class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
                       </div>
                     </div>
-                    <label class="flex items-center gap-2 cursor-pointer select-none">
-                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="focus-ring rounded" />
-                      <span class="text-[11px] text-gray-600">Fire laser during weld</span>
+                    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="rounded" />
+                      <span class="text-[11px] text-gray-600">Laser on during weld</span>
                     </label>
-                    <div x-show="step.with_laser" class="flex items-baseline gap-1">
-                      <label :for="'ws-ldel-' + i" class="text-[11px] text-gray-500">Laser delay</label>
-                      <input :id="'ws-ldel-' + i" type="number" step="any" min="0" x-model.number="step.laser_delay" @change="markDirty()"
-                             class="no-spinner focus-ring w-16 bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
-                      <span class="text-[11px] text-dim">s</span>
-                    </div>
+                    <p class="text-[10px] text-dim leading-relaxed">
+                      Robot approaches Point A at full speed, then welds straight line to B. Depth drift in B automatically removed.
+                    </p>
                   </div>
                 </template>
 
                 <!-- MoveC step fields -->
                 <template x-if="step.type === 'MoveC'">
-                  <div class="space-y-2">
-                    <template x-for="(field, fi) in ['pos_start','pos_via','pos_end']" :key="fi">
-                      <div>
-                        <div class="flex items-center justify-between mb-1">
-                          <span class="text-[11px] text-gray-500 font-medium" x-text="['A (start)','B (via)','C (end)'][fi]"></span>
-                          <button @click="captureCirclePoint(step, field)" :disabled="!connected"
-                                  class="focus-ring text-xs px-2 py-0.5 rounded border border-chrome-input bg-surface-raised hover:bg-btn text-gray-700 disabled:opacity-40"
-                                  x-text="'Capture ' + ['A','B','C'][fi]">
-                          </button>
-                        </div>
-                        <div class="grid grid-cols-6 gap-1">
-                          <template x-for="(_, j) in [0,1,2,3,4,5]" :key="j">
-                            <input type="number" step="any"
-                                   :placeholder="['X','Y','Z','A','B','C'][j]"
-                                   :value="step[field] ? step[field][j] : ''"
-                                   @change="if (!step[field]) step[field] = [0,0,0,0,0,0]; step[field][j] = parseFloat($event.target.value) || 0; markDirty()"
-                                   class="no-spinner focus-ring bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 w-full transition-colors duration-150" />
-                          </template>
-                        </div>
-                      </div>
-                    </template>
-                    <div class="grid grid-cols-4 gap-2">
-                      <div>
-                        <label :for="'mc-vel-' + i" class="block text-[11px] text-gray-500 mb-1">Vel</label>
-                        <input :id="'mc-vel-' + i" type="number" step="any" x-model.number="step.vel" @change="markDirty()"
-                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
-                      </div>
-                      <div>
-                        <label :for="'mc-acc-' + i" class="block text-[11px] text-gray-500 mb-1">Acc</label>
-                        <input :id="'mc-acc-' + i" type="number" step="any" x-model.number="step.acc" @change="markDirty()"
-                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
-                      </div>
-                      <div>
-                        <label :for="'mc-time-' + i" class="block text-[11px] text-gray-500 mb-1">Time (s)</label>
-                        <input :id="'mc-time-' + i" type="number" step="any" x-model.number="step.time" @change="markDirty()"
-                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
-                      </div>
-                      <div>
-                        <label :for="'mc-ang-' + i" class="block text-[11px] text-gray-500 mb-1">Angle2 (360=full)</label>
-                        <input :id="'mc-ang-' + i" type="number" step="any" x-model.number="step.angle2" @change="markDirty()"
-                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
-                      </div>
+                  <div class="space-y-3">
+                    <div x-show="!jogModeEnabled"
+                         class="flex items-center gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                      <span aria-hidden="true">⚠</span>
+                      Enable Jog (Jog page) and position the robot before capturing circle points.
                     </div>
-                    <label class="flex items-center gap-2 cursor-pointer select-none">
-                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="focus-ring rounded" />
-                      <span class="text-[11px] text-gray-600">Fire laser during arc</span>
+                    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" @change="step.angle2 = $event.target.checked ? 360 : 0; markDirty()"
+                             :checked="step.angle2 == 360" class="rounded" />
+                      <span class="text-[11px] text-gray-700 font-medium">Full circle (360°)</span>
                     </label>
-                    <div x-show="step.with_laser" class="flex items-baseline gap-1">
-                      <label :for="'mc-ldel-' + i" class="text-[11px] text-gray-500">Laser delay</label>
-                      <input :id="'mc-ldel-' + i" type="number" step="any" min="0" x-model.number="step.laser_delay" @change="markDirty()"
-                             class="no-spinner focus-ring w-16 bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
-                      <span class="text-[11px] text-dim">s</span>
+                    <div class="grid grid-cols-3 gap-2">
+                      <div class="rounded-lg border border-chrome bg-surface-input p-2.5 space-y-1.5">
+                        <div class="text-[10px] font-semibold text-dim uppercase tracking-widest"
+                             x-text="step.angle2 == 360 ? 'A — 0°  start' : 'A — arc start'"></div>
+                        <div class="font-mono text-[11px] text-gray-600 min-h-[2rem] flex items-center"
+                             x-text="step.pos_start ? '[' + step.pos_start.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
+                        <button @click="captureCirclePoint(i, 'a')"
+                                :disabled="!jogModeEnabled || circleCapturing === i + '-a'"
+                                class="focus-ring w-full py-1.5 text-xs font-semibold rounded-md transition-colors duration-150"
+                                :class="step.pos_start ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-emerald-600 hover:bg-emerald-700 text-white'">
+                          <span x-text="circleCapturing === i + '-a' ? 'Recording…' : (step.pos_start ? 'Re-record A' : 'Record A')"></span>
+                        </button>
+                      </div>
+                      <div class="rounded-lg border border-chrome bg-surface-input p-2.5 space-y-1.5">
+                        <div class="text-[10px] font-semibold text-dim uppercase tracking-widest"
+                             x-text="step.angle2 == 360 ? 'B — ~120°' : 'B — midpoint'"></div>
+                        <div class="font-mono text-[11px] text-gray-600 min-h-[2rem] flex items-center"
+                             x-text="step.pos_via ? '[' + step.pos_via.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
+                        <button @click="captureCirclePoint(i, 'b')"
+                                :disabled="!jogModeEnabled || circleCapturing === i + '-b'"
+                                class="focus-ring w-full py-1.5 text-xs font-semibold rounded-md transition-colors duration-150"
+                                :class="step.pos_via ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-emerald-600 hover:bg-emerald-700 text-white'">
+                          <span x-text="circleCapturing === i + '-b' ? 'Recording…' : (step.pos_via ? 'Re-record B' : 'Record B')"></span>
+                        </button>
+                      </div>
+                      <div class="rounded-lg border border-chrome bg-surface-input p-2.5 space-y-1.5">
+                        <div class="text-[10px] font-semibold text-dim uppercase tracking-widest"
+                             x-text="step.angle2 == 360 ? 'C — ~240°' : 'C — arc end'"></div>
+                        <div class="font-mono text-[11px] text-gray-600 min-h-[2rem] flex items-center"
+                             x-text="step.pos_end ? '[' + step.pos_end.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
+                        <button @click="captureCirclePoint(i, 'c')"
+                                :disabled="!jogModeEnabled || circleCapturing === i + '-c'"
+                                class="focus-ring w-full py-1.5 text-xs font-semibold rounded-md transition-colors duration-150"
+                                :class="step.pos_end ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-emerald-600 hover:bg-emerald-700 text-white'">
+                          <span x-text="circleCapturing === i + '-c' ? 'Recording…' : (step.pos_end ? 'Re-record C' : 'Record C')"></span>
+                        </button>
+                      </div>
                     </div>
+                    <div x-show="step.angle2 == 360"
+                         class="flex items-start gap-2 text-[11px] text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                      <span aria-hidden="true" class="mt-0.5">●</span>
+                      <span>Space A, B, C evenly around the circle (~120° apart). Do <strong>not</strong> record C at the same position as A — they must be 3 distinct points. <code>angle2=360</code> closes back to A automatically.</span>
+                    </div>
+                    <div x-show="step.angle2 != 360"
+                         class="text-[10px] text-dim leading-relaxed">
+                      A = arc start, B = any point along the arc, C = arc end.
+                    </div>
+                    <div class="grid grid-cols-3 gap-2">
+                      <div>
+                        <label :for="'mc-vel-' + i" class="block text-[11px] text-gray-500 mb-1">Vel (mm/s)</label>
+                        <input :id="'mc-vel-' + i" type="number" step="any" min="0.1"
+                               x-model.number="step.vel" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                      <div>
+                        <label :for="'mc-acc-' + i" class="block text-[11px] text-gray-500 mb-1">Acc (mm/s²)</label>
+                        <input :id="'mc-acc-' + i" type="number" step="any" min="0.1"
+                               x-model.number="step.acc" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                      <div>
+                        <label :for="'mc-time-' + i" class="block text-[11px] text-gray-500 mb-1">Time (s, 0=auto)</label>
+                        <input :id="'mc-time-' + i" type="number" step="any" min="0"
+                               x-model.number="step.time" @change="markDirty()"
+                               class="focus-ring w-full bg-surface-input border border-chrome-input rounded-md px-2 py-1 text-xs font-mono text-gray-900 transition-colors duration-150" />
+                      </div>
+                    </div>
+                    <label class="flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" x-model="step.with_laser" @change="markDirty()" class="rounded" />
+                      <span class="text-[11px] text-gray-600">Laser on during arc</span>
+                    </label>
                   </div>
                 </template>
 

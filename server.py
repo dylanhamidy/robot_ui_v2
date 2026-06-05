@@ -161,9 +161,9 @@ async def _handle_emergency():
         except Exception:
             pass
     _tt_enabled = False
+    _stop_requested = True
     await _drfl_send({"cmd": "stop"})
     _active_plan = None
-    _stop_requested = False
     await _broadcast("[EMERGENCY STOP]\n")
 
 async def _debounced_emg_clear():

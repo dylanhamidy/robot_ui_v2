@@ -76,6 +76,10 @@ function app() {
     handGuideLoading: false,
     captureType: "MoveJ",
 
+    // WeldStraight/MoveC capture state
+    weldCapturing: null,
+    circleCapturing: null,
+
     // Jog
     jogReference: 0,
     jogVelocity: 20,
@@ -907,28 +911,75 @@ function app() {
       // Step appears via [CAPTURE] WS event → pushed to modalSteps
     },
 
-    async captureWeldPoint(step, field) {
-      const r = await fetch("/api/robot/capture_pose", { method: "POST" });
-      if (!r.ok) return;
-      const data = await r.json();
-      step[field] = data.pos;
-      this.markDirty();
+    async captureWeldPoint(stepIdx, which) {
+      const key = `${stepIdx}-${which}`;
+      this.weldCapturing = key;
+      try {
+        const r = await fetch("/api/robot/capture_pose", { method: "POST" });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          this.termLines.push({ text: `[ERROR] Capture failed: ${err.detail || r.status}`, type: "sentinel-error" });
+          return;
+        }
+        const { pos } = await r.json();
+        const step = this.modalSteps[stepIdx];
+        if (!step) return;
+        if (which === "a") step.pos_a = pos;
+        else step.pos_b = pos;
+        if (step.pos_a && step.pos_b) {
+          const { distance } = this._computeWeldDisplacement(step.pos_a, step.pos_b);
+          step.distance_mm = distance;
+        }
+        this.markDirty();
+      } finally {
+        this.weldCapturing = null;
+      }
     },
 
-    async captureCirclePoint(step, field) {
-      const r = await fetch("/api/robot/capture_pose", { method: "POST" });
-      if (!r.ok) return;
-      const data = await r.json();
-      step[field] = data.pos;
-      this.markDirty();
+    async captureCirclePoint(stepIdx, which) {
+      const key = `${stepIdx}-${which}`;
+      this.circleCapturing = key;
+      try {
+        const r = await fetch("/api/robot/capture_pose", { method: "POST" });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          this.termLines.push({ text: `[ERROR] Capture failed: ${err.detail || r.status}`, type: "sentinel-error" });
+          return;
+        }
+        const { pos } = await r.json();
+        const step = this.modalSteps[stepIdx];
+        if (!step) return;
+        if (which === "a") step.pos_start = pos;
+        else if (which === "b") step.pos_via = pos;
+        else step.pos_end = pos;
+        this.markDirty();
+      } finally {
+        this.circleCapturing = null;
+      }
     },
 
-    _computeWeldDistance(pos_a, pos_b) {
-      if (!pos_a || !pos_b) return null;
-      const dx = pos_b[0] - pos_a[0];
-      const dy = pos_b[1] - pos_a[1];
-      const dz = pos_b[2] - pos_a[2];
-      return Math.sqrt(dx*dx + dy*dy + dz*dz).toFixed(1);
+    _computeWeldDisplacement(posA, posB) {
+      // ZYZ rotation matrix: R = Rz(A) @ Ry(B) @ Rz(C) — Doosan TCP convention
+      const [xA, yA, zA, AD, BD, CD] = posA;
+      const [xB, yB, zB] = posB;
+      const toRad = (d) => d * Math.PI / 180;
+      const cA = Math.cos(toRad(AD)), sA = Math.sin(toRad(AD));
+      const cB = Math.cos(toRad(BD)), sB = Math.sin(toRad(BD));
+      const cC = Math.cos(toRad(CD)), sC = Math.sin(toRad(CD));
+      const R = [
+        [cA*cB*cC - sA*sC,  -cA*cB*sC - sA*cC,  cA*sB],
+        [sA*cB*cC + cA*sC,  -sA*cB*sC + cA*cC,  sA*sB],
+        [-sB*cC,             sB*sC,              cB   ],
+      ];
+      const vx = xB - xA, vy = yB - yA, vz = zB - zA;
+      const dxT = R[0][0]*vx + R[1][0]*vy + R[2][0]*vz;
+      const dyT = R[0][1]*vx + R[1][1]*vy + R[2][1]*vz;
+      const distance = parseFloat(Math.sqrt(dxT*dxT + dyT*dyT).toFixed(3));
+      const displacement = [
+        parseFloat(dxT.toFixed(4)), parseFloat(dyT.toFixed(4)),
+        0.0, 0.0, 0.0, 0.0,
+      ];
+      return { displacement, distance };
     },
 
     async clearCapture() {
