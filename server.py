@@ -736,6 +736,22 @@ async def robot_jog(body: JogBody):
                            "reference": body.reference, "velocity": body.velocity})
     return {"ok": ok}
 
+@app.post("/api/robot/jog/enable")
+async def robot_jog_enable():
+    if not _connected:
+        raise HTTPException(409, "Not connected")
+    if _active_plan is not None:
+        raise HTTPException(409, "A plan is running")
+    ok = await _drfl_send({"cmd": "enable_jog"})
+    return {"ok": ok}
+
+@app.post("/api/robot/jog/disable")
+async def robot_jog_disable():
+    if not _connected:
+        raise HTTPException(409, "Not connected")
+    ok = await _drfl_send({"cmd": "disable_jog"})
+    return {"ok": ok}
+
 # ── turntable control ──────────────────────────────────────────────────────
 
 class TurntableConnectBody(BaseModel):

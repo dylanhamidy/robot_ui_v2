@@ -77,9 +77,10 @@ function app() {
     // Jog
     jogReference: 0,
     jogVelocity: 20,
+    jogModeEnabled: false,
+    jogModeLoading: false,
     jogActiveAxis: null,
     jogActiveSign: null,
-    jogInterval: null,
     jogError: "",
     jogJointAxes: [
       {axis:0,label:"J1"},{axis:1,label:"J2"},{axis:2,label:"J3"},
@@ -98,8 +99,8 @@ function app() {
       this.pollStatus();
       this.pollTurntableStatus();
       this.connectWS();
-      this.$watch("currentPage", (val, old) => { if (old === "jog") this.jogStop(); });
-      this.$watch("planMode",    (val, old) => { if (old === "jog") this.jogStop(); });
+      this.$watch("currentPage", (val, old) => { if (old === "jog") this.disableJogMode(); });
+      this.$watch("planMode",    (val, old) => { if (old === "jog") this.disableJogMode(); });
     },
 
     toggleDark() {
@@ -180,10 +181,18 @@ function app() {
             } catch (_) {}
           } else if (l.includes("[PLAN_IMPORTED]")) {
             this.loadPlans();
+          } else if (l.includes("[JOG_ENABLED]")) {
+            this.jogModeEnabled = true;
+            this.jogModeLoading = false;
+          } else if (l.includes("[JOG_DISABLED]")) {
+            this.jogModeEnabled = false;
+            this.jogModeLoading = false;
           } else if (l.includes("[DISCONNECTED]")) {
             this.connected = false;
             this.handGuideEnabled = false;
             this.handGuideLoading = false;
+            this.jogModeEnabled = false;
+            this.jogModeLoading = false;
             this.jogStop();
             this.resetSetup();
           }
@@ -310,7 +319,7 @@ function app() {
     },
 
     async switchToHandGuide() {
-      await this.jogStop();
+      await this.disableJogMode();
       this.planMode = "handguide";
     },
 
@@ -592,7 +601,7 @@ function app() {
       this.planModalError = "";
       this.modalDirty = false;
       this.showUnsavedWarning = false;
-      await this.jogStop();
+      await this.disableJogMode();
       if (this.handGuideEnabled) await this.disableHandGuide();
       await this._cleanupModalTurntable();
       this.selectedStepIndex = null;
@@ -601,7 +610,7 @@ function app() {
     },
 
     async closePlanModal() {
-      await this.jogStop();
+      await this.disableJogMode();
       if (this.handGuideEnabled) await this.disableHandGuide();
       if (this.modalTtActivated && this.ttEnabled) {
         this.showTtRunningWarning = true;
@@ -624,7 +633,7 @@ function app() {
     },
 
     async closeTtWarningDiscard() {
-      await this.jogStop();
+      await this.disableJogMode();
       this.showTtRunningWarning = false;
       this.modalDirty = false;
       this.showUnsavedWarning = false;
@@ -639,7 +648,7 @@ function app() {
     },
 
     async confirmDiscard() {
-      await this.jogStop();
+      await this.disableJogMode();
       if (this.handGuideEnabled) this.disableHandGuide();
       fetch("/api/robot/hand_guide/points", { method: "DELETE" });
       await this._cleanupModalTurntable();
@@ -710,6 +719,7 @@ function app() {
 
     async startPlan() {
       if (!this.selected || this.running) return;
+      await this.jogStop();
       const r = await fetch("/api/robot/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -791,28 +801,42 @@ function app() {
 
     // ── Jog ───────────────────────────────────────────────────────────────────
 
+    async enableJogMode() {
+      if (!this.connected || this.running || this.jogModeEnabled) return;
+      this.jogModeLoading = true;
+      this.jogError = "";
+      try {
+        const r = await fetch("/api/robot/jog/enable", { method: "POST" });
+        if (!r.ok) { this.jogError = (await r.json()).detail; this.jogModeLoading = false; }
+      } catch (_) { this.jogError = "Request failed"; this.jogModeLoading = false; }
+    },
+
+    async disableJogMode() {
+      if (!this.jogModeEnabled && !this.jogModeLoading) return;
+      await this.jogStop();
+      this.jogModeLoading = false;
+      try {
+        await fetch("/api/robot/jog/disable", { method: "POST" });
+      } catch (_) {}
+      this.jogModeEnabled = false;
+    },
+
     async jogStart(axis, sign) {
-      if (!this.connected || this.running) return;
-      if (this.jogInterval) return; // already jogging
+      if (!this.connected || this.running || !this.jogModeEnabled) return;
       this.jogActiveAxis = axis;
       this.jogActiveSign = sign;
       this.jogError = "";
-      const send = async () => {
-        try {
-          const r = await fetch("/api/robot/jog", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ axis, reference: this.jogReference, velocity: sign * this.jogVelocity }),
-          });
-          if (!r.ok) { this.jogError = (await r.json()).detail; this.jogStop(); }
-        } catch (_) { this.jogError = "Request failed"; this.jogStop(); }
-      };
-      await send();
-      this.jogInterval = setInterval(send, 200);
+      try {
+        const r = await fetch("/api/robot/jog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ axis, reference: this.jogReference, velocity: sign * this.jogVelocity }),
+        });
+        if (!r.ok) { this.jogError = (await r.json()).detail; this.jogStop(); }
+      } catch (_) { this.jogError = "Request failed"; this.jogStop(); }
     },
 
     async jogStop() {
-      if (this.jogInterval) { clearInterval(this.jogInterval); this.jogInterval = null; }
       if (this.jogActiveAxis === null) return;
       const axis = this.jogActiveAxis;
       this.jogActiveAxis = null;

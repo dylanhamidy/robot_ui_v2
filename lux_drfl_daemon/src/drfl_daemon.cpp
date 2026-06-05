@@ -460,6 +460,8 @@ static void cmdRunPlan(const json& cmd) {
     bool loop        = cmd.value("loop", !single_pass);
 
     g_cancel = false;
+    if (g_robot.get_robot_mode() != ROBOT_MODE_AUTONOMOUS)
+        g_robot.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
     g_worker = std::thread(planWorker, std::move(steps), single_pass, loop);
     g_worker.detach();
 }
@@ -615,6 +617,21 @@ static void cmdClose() {
     g_shutdown = true;
 }
 
+static void cmdEnableJog() {
+    if (g_robot.get_robot_mode() != ROBOT_MODE_MANUAL)
+        g_robot.set_robot_mode(ROBOT_MODE_MANUAL);
+    if (g_robot.get_robot_state() == STATE_SAFE_OFF)
+        g_robot.set_robot_control(CONTROL_SERVO_ON);
+    emit("[JOG_ENABLED]");
+}
+
+static void cmdDisableJog() {
+    g_robot.jog(JOG_AXIS_JOINT_1, MOVE_REFERENCE_BASE, 0.0f); // ensure stopped
+    if (g_robot.get_robot_mode() != ROBOT_MODE_AUTONOMOUS)
+        g_robot.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    emit("[JOG_DISABLED]");
+}
+
 static void cmdJog(const json& cmd) {
     int   axis_int = cmd.value("axis", -1);
     int   ref_int  = cmd.value("reference", 0);
@@ -623,21 +640,9 @@ static void cmdJog(const json& cmd) {
         emit("[ERROR] jog: axis must be 0-11");
         return;
     }
-    if (vel != 0.0f) {
-        // jog() requires MANUAL mode — switch before moving
-        if (g_robot.get_robot_mode() != ROBOT_MODE_MANUAL) {
-            g_robot.set_robot_mode(ROBOT_MODE_MANUAL);
-            if (g_robot.get_robot_state() == STATE_SAFE_OFF)
-                g_robot.set_robot_control(CONTROL_SERVO_ON);
-        }
-    }
     g_robot.jog(static_cast<JOG_AXIS>(axis_int),
                 static_cast<MOVE_REFERENCE>(ref_int),
                 vel);
-    if (vel == 0.0f) {
-        // restore autonomous mode after stop
-        g_robot.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
-    }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────
@@ -647,6 +652,8 @@ static void dispatch(const json& cmd) {
     if      (c == "run_plan")           cmdRunPlan(cmd);
     else if (c == "stop")               cmdStop();
     else if (c == "jog")                cmdJog(cmd);
+    else if (c == "enable_jog")         cmdEnableJog();
+    else if (c == "disable_jog")        cmdDisableJog();
     else if (c == "record_point")       cmdRecordPoint();
     else if (c == "clear_plan")         cmdClearPlan();
     else if (c == "save_plan")          cmdSavePlan();
