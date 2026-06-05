@@ -1784,12 +1784,12 @@
                             <div class="space-y-2">
                               <div class="flex items-center gap-2">
                                 <div class="font-mono text-[11px] text-gray-600 flex-1 min-w-0 truncate"
-                                     x-text="ss.pos && ss.pos.some(v => v !== 0) ? '[' + ss.pos.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + '] mm' : 'Not recorded'"></div>
+                                     x-text="ss.pos ? '[' + ss.pos.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + '] mm' : 'Not recorded'"></div>
                                 <button @click="captureFreeFormPos(i, si, 'pos')"
-                                        :disabled="!jogModeEnabled || freefromCapturing === i + '-' + si + '-pos'"
+                                        :disabled="!connected || freefromCapturing === i + '-' + si + '-pos'"
                                         class="focus-ring flex-shrink-0 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors duration-150"
-                                        :class="ss.pos && ss.pos.some(v => v !== 0) ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-violet-600 hover:bg-violet-700 text-white'">
-                                  <span x-text="freefromCapturing === i + '-' + si + '-pos' ? 'Recording…' : (ss.pos && ss.pos.some(v => v !== 0) ? 'Re-record' : 'Record')"></span>
+                                        :class="ss.pos ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-violet-600 hover:bg-violet-700 text-white'">
+                                  <span x-text="freefromCapturing === i + '-' + si + '-pos' ? 'Recording…' : (ss.pos ? 'Re-record' : 'Record')"></span>
                                 </button>
                               </div>
                               <div class="grid grid-cols-3 gap-1.5">
@@ -1814,27 +1814,38 @@
                           <!-- MoveC sub-step -->
                           <template x-if="ss.type === 'MoveC'">
                             <div class="space-y-2">
-                              <div class="grid grid-cols-2 gap-2">
+                              <div class="grid grid-cols-3 gap-2">
                                 <div>
-                                  <div class="text-[10px] text-dim mb-1">Via point</div>
+                                  <div class="text-[10px] text-dim mb-1">A — start</div>
                                   <div class="font-mono text-[11px] text-gray-600 mb-1.5 min-h-[1.25rem]"
-                                       x-text="ss.pos_via ? '[' + ss.pos_via.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
-                                  <button @click="captureFreeFormPos(i, si, 'pos_via')"
-                                          :disabled="!jogModeEnabled || freefromCapturing === i + '-' + si + '-pos_via'"
+                                       x-text="ss.pos_start ? '[' + ss.pos_start.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
+                                  <button @click="captureFreeFormPos(i, si, 'pos_start')"
+                                          :disabled="!connected || freefromCapturing === i + '-' + si + '-pos_start'"
                                           class="focus-ring w-full py-1 text-xs font-semibold rounded-md transition-colors duration-150"
-                                          :class="ss.pos_via ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-purple-600 hover:bg-purple-700 text-white'">
-                                    <span x-text="freefromCapturing === i + '-' + si + '-pos_via' ? 'Recording…' : (ss.pos_via ? 'Re-record Via' : 'Record Via')"></span>
+                                          :class="ss.pos_start ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-purple-600 hover:bg-purple-700 text-white'">
+                                    <span x-text="freefromCapturing === i + '-' + si + '-pos_start' ? 'Recording…' : (ss.pos_start ? 'Re-record A' : 'Record A')"></span>
                                   </button>
                                 </div>
                                 <div>
-                                  <div class="text-[10px] text-dim mb-1">End point</div>
+                                  <div class="text-[10px] text-dim mb-1">B — via</div>
+                                  <div class="font-mono text-[11px] text-gray-600 mb-1.5 min-h-[1.25rem]"
+                                       x-text="ss.pos_via ? '[' + ss.pos_via.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
+                                  <button @click="captureFreeFormPos(i, si, 'pos_via')"
+                                          :disabled="!connected || freefromCapturing === i + '-' + si + '-pos_via'"
+                                          class="focus-ring w-full py-1 text-xs font-semibold rounded-md transition-colors duration-150"
+                                          :class="ss.pos_via ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-purple-600 hover:bg-purple-700 text-white'">
+                                    <span x-text="freefromCapturing === i + '-' + si + '-pos_via' ? 'Recording…' : (ss.pos_via ? 'Re-record B' : 'Record B')"></span>
+                                  </button>
+                                </div>
+                                <div>
+                                  <div class="text-[10px] text-dim mb-1">C — end</div>
                                   <div class="font-mono text-[11px] text-gray-600 mb-1.5 min-h-[1.25rem]"
                                        x-text="ss.pos_end ? '[' + ss.pos_end.slice(0,3).map(v => parseFloat(v).toFixed(1)).join(', ') + ']' : 'Not recorded'"></div>
                                   <button @click="captureFreeFormPos(i, si, 'pos_end')"
-                                          :disabled="!jogModeEnabled || freefromCapturing === i + '-' + si + '-pos_end'"
+                                          :disabled="!connected || freefromCapturing === i + '-' + si + '-pos_end'"
                                           class="focus-ring w-full py-1 text-xs font-semibold rounded-md transition-colors duration-150"
                                           :class="ss.pos_end ? 'bg-surface-raised hover:bg-btn text-gray-700 border border-chrome-input' : 'bg-purple-600 hover:bg-purple-700 text-white'">
-                                    <span x-text="freefromCapturing === i + '-' + si + '-pos_end' ? 'Recording…' : (ss.pos_end ? 'Re-record End' : 'Record End')"></span>
+                                    <span x-text="freefromCapturing === i + '-' + si + '-pos_end' ? 'Recording…' : (ss.pos_end ? 'Re-record C' : 'Record C')"></span>
                                   </button>
                                 </div>
                               </div>

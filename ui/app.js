@@ -725,7 +725,7 @@ function app() {
                 const a = Number(ss.acc) || 30;
                 return {
                   type: "MoveL",
-                  pos: (ss.pos || [0,0,0,0,0,0]).map(Number),
+                  pos: ss.pos ? ss.pos.map(Number) : null,
                   vel: [v, v], acc: [a, a],
                   time: Number(ss.time) || 0,
                   with_laser: ss.with_laser || false,
@@ -736,8 +736,9 @@ function app() {
                 const a = Number(ss.acc) || 30;
                 return {
                   type: "MoveC",
-                  pos_via: (ss.pos_via || [0,0,0,0,0,0]).map(Number),
-                  pos_end: (ss.pos_end || [0,0,0,0,0,0]).map(Number),
+                  pos_start: ss.pos_start ? ss.pos_start.map(Number) : null,
+                  pos_via: ss.pos_via ? ss.pos_via.map(Number) : null,
+                  pos_end: ss.pos_end ? ss.pos_end.map(Number) : null,
                   vel: [v, v], acc: [a, a],
                   time: Number(ss.time) || 0,
                   angle2: Number(ss.angle2) || 0,
@@ -1114,9 +1115,9 @@ function app() {
       const step = this.modalSteps[stepIdx];
       if (!step) return;
       if (type === "MoveL") {
-        step.sub_steps.push({ type: "MoveL", pos: [0,0,0,0,0,0], vel: 30, acc: 30, time: 0, with_laser: false });
+        step.sub_steps.push({ type: "MoveL", pos: null, vel: 30, acc: 30, time: 0, with_laser: false });
       } else if (type === "MoveC") {
-        step.sub_steps.push({ type: "MoveC", pos_via: [0,0,0,0,0,0], pos_end: [0,0,0,0,0,0], vel: 30, acc: 30, time: 0, angle2: 0, with_laser: false });
+        step.sub_steps.push({ type: "MoveC", pos_start: null, pos_via: null, pos_end: null, vel: 30, acc: 30, time: 0, angle2: 0, with_laser: false });
       }
       this.modalSteps[stepIdx] = { ...step };
       this.markDirty();

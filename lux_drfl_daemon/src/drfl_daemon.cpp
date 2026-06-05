@@ -341,7 +341,7 @@ static bool execStep(const json& step, int stepIdx) {
                 }
                 float t = ss.value("time", 0.f);
                 g_robot.amovel(pos, vel2, acc2, t, MOVE_MODE_ABSOLUTE,
-                               MOVE_REFERENCE_BASE, 0.f, BLENDING_SPEED_TYPE_DUPLICATE);
+                               MOVE_REFERENCE_BASE, BLENDING_SPEED_TYPE_DUPLICATE);
 
             } else if (sstype == "MoveC") {
                 auto parse6 = [](const json& j, float out[6]) {
