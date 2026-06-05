@@ -623,9 +623,21 @@ static void cmdJog(const json& cmd) {
         emit("[ERROR] jog: axis must be 0-11");
         return;
     }
+    if (vel != 0.0f) {
+        // jog() requires MANUAL mode — switch before moving
+        if (g_robot.get_robot_mode() != ROBOT_MODE_MANUAL) {
+            g_robot.set_robot_mode(ROBOT_MODE_MANUAL);
+            if (g_robot.get_robot_state() == STATE_SAFE_OFF)
+                g_robot.set_robot_control(CONTROL_SERVO_ON);
+        }
+    }
     g_robot.jog(static_cast<JOG_AXIS>(axis_int),
                 static_cast<MOVE_REFERENCE>(ref_int),
                 vel);
+    if (vel == 0.0f) {
+        // restore autonomous mode after stop
+        g_robot.set_robot_mode(ROBOT_MODE_AUTONOMOUS);
+    }
 }
 
 // ── Dispatch ──────────────────────────────────────────────────────────────────

@@ -567,7 +567,7 @@
                 <div class="text-[11px] font-semibold text-gray-500 mb-2 text-center select-none" x-text="a.label"></div>
                 <div class="flex gap-1.5">
                   <button class="focus-ring flex-1 h-9 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
-                          :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                          :class="jogActiveAxis === a.axis && jogActiveSign === -1 ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
                           @mousedown.prevent="jogStart(a.axis, -1)"
                           @mouseup="jogStop()"
                           @mouseleave="jogStop()"
@@ -576,7 +576,7 @@
                           @touchcancel.prevent="jogStop()"
                           :aria-label="'Jog ' + a.label + ' negative'">−</button>
                   <button class="focus-ring flex-1 h-9 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
-                          :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                          :class="jogActiveAxis === a.axis && jogActiveSign === 1 ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
                           @mousedown.prevent="jogStart(a.axis, 1)"
                           @mouseup="jogStop()"
                           @mouseleave="jogStop()"
@@ -599,7 +599,7 @@
                 <div class="text-[11px] font-semibold text-gray-500 mb-2 text-center select-none" x-text="a.label"></div>
                 <div class="flex gap-1.5">
                   <button class="focus-ring flex-1 h-9 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
-                          :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                          :class="jogActiveAxis === a.axis && jogActiveSign === -1 ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
                           @mousedown.prevent="jogStart(a.axis, -1)"
                           @mouseup="jogStop()"
                           @mouseleave="jogStop()"
@@ -608,7 +608,7 @@
                           @touchcancel.prevent="jogStop()"
                           :aria-label="'Jog ' + a.label + ' negative'">−</button>
                   <button class="focus-ring flex-1 h-9 rounded-md bg-btn border border-chrome-input text-gray-700 text-sm font-bold select-none transition-colors duration-100"
-                          :class="jogActiveAxis === a.axis ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
+                          :class="jogActiveAxis === a.axis && jogActiveSign === 1 ? 'ring-2 ring-blue-300 bg-blue-50' : 'hover:bg-btn'"
                           @mousedown.prevent="jogStart(a.axis, 1)"
                           @mouseup="jogStop()"
                           @mouseleave="jogStop()"

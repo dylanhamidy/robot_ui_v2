@@ -78,6 +78,7 @@ function app() {
     jogReference: 0,
     jogVelocity: 20,
     jogActiveAxis: null,
+    jogActiveSign: null,
     jogInterval: null,
     jogError: "",
     jogJointAxes: [
@@ -794,6 +795,7 @@ function app() {
       if (!this.connected || this.running) return;
       if (this.jogInterval) return; // already jogging
       this.jogActiveAxis = axis;
+      this.jogActiveSign = sign;
       this.jogError = "";
       const send = async () => {
         try {
@@ -814,6 +816,7 @@ function app() {
       if (this.jogActiveAxis === null) return;
       const axis = this.jogActiveAxis;
       this.jogActiveAxis = null;
+      this.jogActiveSign = null;
       try {
         await fetch("/api/robot/jog", {
           method: "POST",
