@@ -81,6 +81,7 @@ function app() {
     circleCapturing: null,
     freefromCapturing: null,
     freefromCaptureTarget: null,
+    freefromMoveCTarget: 'a',
 
     // Jog
     jogReference: 0,
@@ -201,8 +202,18 @@ function app() {
               if (this.captureType === 'WeldStraight' || this.captureType === 'MoveC') {
                 this.recordPendingPoint();
               } else if (this.captureType === 'FreeForm' && this.freefromCaptureTarget) {
-                const { stepIdx, subIdx, field } = this.freefromCaptureTarget;
-                this.captureFreeFormPos(stepIdx, subIdx, field);
+                const { stepIdx, subIdx, subType } = this.freefromCaptureTarget;
+                if (subType === 'MoveL') {
+                  this.captureFreeFormPos(stepIdx, subIdx, 'pos');
+                } else {
+                  const fieldMap = { a: 'pos_start', b: 'pos_via', c: 'pos_end' };
+                  const nextMap  = { a: 'b', b: 'c', c: 'c' };
+                  const field = fieldMap[this.freefromMoveCTarget] || 'pos_start';
+                  const next  = nextMap[this.freefromMoveCTarget]  || 'c';
+                  this.captureFreeFormPos(stepIdx, subIdx, field).then(() => {
+                    this.freefromMoveCTarget = next;
+                  });
+                }
               } else {
                 this.recordPoint();
               }
@@ -974,6 +985,7 @@ function app() {
       this.weldCaptureTarget = 'a';
       this.circleCaptureTarget = 'a';
       this.freefromCaptureTarget = null;
+      this.freefromMoveCTarget = 'a';
     },
 
     async recordPendingPoint() {
@@ -1111,16 +1123,16 @@ function app() {
       }
     },
 
-    armFreeFormPos(stepIdx, subIdx, field) {
-      this.freefromCaptureTarget = { stepIdx, subIdx, field };
+    armFreeFormSubStep(stepIdx, subIdx, subType, moveCTarget = 'a') {
+      this.freefromCaptureTarget = { stepIdx, subIdx, subType };
+      this.freefromMoveCTarget = moveCTarget;
       this.captureType = 'FreeForm';
     },
 
-    isFreeFormArmed(stepIdx, subIdx, field) {
+    isFreeFormSubStepArmed(stepIdx, subIdx) {
       return this.freefromCaptureTarget !== null &&
              this.freefromCaptureTarget.stepIdx === stepIdx &&
-             this.freefromCaptureTarget.subIdx === subIdx &&
-             this.freefromCaptureTarget.field === field;
+             this.freefromCaptureTarget.subIdx === subIdx;
     },
 
     addFreeFormSubStep(stepIdx, type) {
@@ -1146,7 +1158,6 @@ function app() {
     async captureFreeFormPos(stepIdx, subIdx, field) {
       const key = `${stepIdx}-${subIdx}-${field}`;
       this.freefromCapturing = key;
-      this.freefromCaptureTarget = { stepIdx, subIdx, field };
       try {
         const r = await fetch("/api/robot/capture_pose", { method: "POST" });
         if (!r.ok) {
