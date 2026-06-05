@@ -97,6 +97,13 @@ function app() {
       {axis:9,label:"RX"},{axis:10,label:"RY"},{axis:11,label:"RZ"},
     ],
 
+    // Pending WeldStraight / MoveC capture (hand guide + jog panels)
+    pendingWeldPos: { pos_a: null, pos_b: null },
+    pendingCirclePos: { pos_start: null, pos_via: null, pos_end: null },
+    weldCaptureTarget: 'a',
+    circleCaptureTarget: 'a',
+    pendingCapturing: false,
+
     ws: null,
 
     async init() {
@@ -332,8 +339,8 @@ function app() {
         if (s.type === "WeldStraight") {
           return {
             type: "WeldStraight",
-            pos_a: [...(s.pos_a || [0, 0, 0, 0, 0, 0])],
-            pos_b: [...(s.pos_b || [0, 0, 0, 0, 0, 0])],
+            pos_a: s.pos_a ? [...s.pos_a] : null,
+            pos_b: s.pos_b ? [...s.pos_b] : null,
             vel: Array.isArray(s.vel) ? s.vel[0] : (s.vel ?? 10),
             acc: Array.isArray(s.acc) ? s.acc[0] : (s.acc ?? 10),
             time: s.time ?? 0,
@@ -559,8 +566,8 @@ function app() {
       } else if (step.type === "WeldStraight") {
         clearTt(); clearCircle();
         delete step.pos; delete step.delay; delete step.with_turntable;
-        step.pos_a = [0, 0, 0, 0, 0, 0];
-        step.pos_b = [0, 0, 0, 0, 0, 0];
+        step.pos_a = null;
+        step.pos_b = null;
         step.vel = 10; step.acc = 10; step.time = 0;
         step.with_laser = false; step.laser_delay = 0;
       } else if (step.type === "MoveC") {
@@ -653,8 +660,8 @@ function app() {
           const acc = Number(s.acc) || 10;
           return {
             type: "WeldStraight",
-            pos_a: (s.pos_a || [0,0,0,0,0,0]).map(Number),
-            pos_b: (s.pos_b || [0,0,0,0,0,0]).map(Number),
+            pos_a: s.pos_a ? s.pos_a.map(Number) : null,
+            pos_b: s.pos_b ? s.pos_b.map(Number) : null,
             vel: [vel, vel], acc: [acc, acc],
             time: Number(s.time) || 0,
             with_laser: s.with_laser || false,
@@ -887,10 +894,89 @@ function app() {
 
     async setMoveType(type) {
       this.captureType = type;
-      await fetch("/api/robot/hand_guide/type", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ move_type: type }),
+      this._resetPendingCapture();
+      if (type === 'MoveJ' || type === 'MoveL') {
+        await fetch("/api/robot/hand_guide/type", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ move_type: type }),
+        });
+      }
+    },
+
+    _resetPendingCapture() {
+      this.pendingWeldPos = { pos_a: null, pos_b: null };
+      this.pendingCirclePos = { pos_start: null, pos_via: null, pos_end: null };
+      this.weldCaptureTarget = 'a';
+      this.circleCaptureTarget = 'a';
+    },
+
+    async recordPendingPoint() {
+      this.pendingCapturing = true;
+      try {
+        const r = await fetch("/api/robot/capture_pose", { method: "POST" });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          this.termLines.push({ text: `[ERROR] Capture failed: ${err.detail || r.status}`, type: "sentinel-error" });
+          return;
+        }
+        const { pos } = await r.json();
+        if (this.captureType === 'WeldStraight') {
+          if (this.weldCaptureTarget === 'a') {
+            this.pendingWeldPos = { ...this.pendingWeldPos, pos_a: pos };
+            this.weldCaptureTarget = 'b';
+          } else {
+            this.pendingWeldPos = { ...this.pendingWeldPos, pos_b: pos };
+          }
+        } else if (this.captureType === 'MoveC') {
+          if (this.circleCaptureTarget === 'a') {
+            this.pendingCirclePos = { ...this.pendingCirclePos, pos_start: pos };
+            this.circleCaptureTarget = 'b';
+          } else if (this.circleCaptureTarget === 'b') {
+            this.pendingCirclePos = { ...this.pendingCirclePos, pos_via: pos };
+            this.circleCaptureTarget = 'c';
+          } else {
+            this.pendingCirclePos = { ...this.pendingCirclePos, pos_end: pos };
+          }
+        }
+      } finally {
+        this.pendingCapturing = false;
+      }
+    },
+
+    addPendingWeldStep() {
+      const { pos_a, pos_b } = this.pendingWeldPos;
+      if (!pos_a || !pos_b) return;
+      const { distance } = this._computeWeldDisplacement(pos_a, pos_b);
+      this.modalSteps.push({
+        type: 'WeldStraight', pos_a, pos_b,
+        vel: 10, acc: 10, time: 0,
+        with_laser: false, laser_delay: 0,
+        enabled: true, distance_mm: distance,
+      });
+      this.pendingWeldPos = { pos_a: null, pos_b: null };
+      this.weldCaptureTarget = 'a';
+      this.markDirty();
+      this.$nextTick(() => {
+        const last = this.$refs.stepsContainer?.lastElementChild;
+        if (last) last.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    },
+
+    addPendingCircleStep() {
+      const { pos_start, pos_via, pos_end } = this.pendingCirclePos;
+      if (!pos_start || !pos_via || !pos_end) return;
+      this.modalSteps.push({
+        type: 'MoveC', pos_start, pos_via, pos_end,
+        vel: 50, acc: 100, time: 0, angle2: 0,
+        with_laser: false, laser_delay: 0, enabled: true,
+      });
+      this.pendingCirclePos = { pos_start: null, pos_via: null, pos_end: null };
+      this.circleCaptureTarget = 'a';
+      this.markDirty();
+      this.$nextTick(() => {
+        const last = this.$refs.stepsContainer?.lastElementChild;
+        if (last) last.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       });
     },
 
@@ -930,6 +1016,7 @@ function app() {
           const { distance } = this._computeWeldDisplacement(step.pos_a, step.pos_b);
           step.distance_mm = distance;
         }
+        this.modalSteps[stepIdx] = { ...step };
         this.markDirty();
       } finally {
         this.weldCapturing = null;
@@ -952,6 +1039,7 @@ function app() {
         if (which === "a") step.pos_start = pos;
         else if (which === "b") step.pos_via = pos;
         else step.pos_end = pos;
+        this.modalSteps[stepIdx] = { ...step };
         this.markDirty();
       } finally {
         this.circleCapturing = null;
@@ -988,6 +1076,7 @@ function app() {
       this.modalSteps = [];
       this.modalDirty = false;
       this.showUnsavedWarning = false;
+      this._resetPendingCapture();
       this.handGuideLoading = false;
     },
 
