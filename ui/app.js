@@ -399,6 +399,8 @@ function app() {
             sub_steps: (s.sub_steps || []).map(ss => {
               const copy = { ...ss };
               if (copy.type === "MoveC") delete copy.pos_start;
+              if (Array.isArray(copy.vel)) copy.vel = copy.vel[0];
+              if (Array.isArray(copy.acc)) copy.acc = copy.acc[0];
               return copy;
             }),
           };
@@ -744,8 +746,8 @@ function app() {
               const isLast = idx === arr.length - 1;
               const blendRad = isLast ? 0 : Math.max(0.5, useGlobal ? globalBlend : (Number(ss.blend_radius) || 5));
               if (ss.type === "MoveL") {
-                const v = Number(ss.vel) || 30;
-                const a = Number(ss.acc) || 30;
+                const v = Array.isArray(ss.vel) ? ss.vel[0] : (Number(ss.vel) || 30);
+                const a = Array.isArray(ss.acc) ? ss.acc[0] : (Number(ss.acc) || 30);
                 return {
                   type: "MoveL",
                   pos: ss.pos ? ss.pos.map(Number) : null,
@@ -756,8 +758,8 @@ function app() {
                 };
               }
               if (ss.type === "MoveC") {
-                const v = Number(ss.vel) || 30;
-                const a = Number(ss.acc) || 30;
+                const v = Array.isArray(ss.vel) ? ss.vel[0] : (Number(ss.vel) || 30);
+                const a = Array.isArray(ss.acc) ? ss.acc[0] : (Number(ss.acc) || 30);
                 return {
                   type: "MoveC",
                   pos_via: ss.pos_via ? ss.pos_via.map(Number) : null,
