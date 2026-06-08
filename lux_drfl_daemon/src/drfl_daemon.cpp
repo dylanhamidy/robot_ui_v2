@@ -769,12 +769,14 @@ int main(int argc, char** argv) {
     g_connected = true;
     emit("[CONNECTED]");
 
-    // Keepalive thread — polls get_robot_state() every 30s to prevent TCP idle timeout
+    // Keepalive thread — check_motion() sends on command socket every 60s to prevent
+    // controller's ~5min idle timeout from dropping the command channel.
+    // get_robot_state() reads local monitoring cache only (no network traffic).
     std::thread keepalive([] {
         while (!g_shutdown) {
-            for (int i = 0; i < 30 && !g_shutdown; i++)
+            for (int i = 0; i < 60 && !g_shutdown; i++)
                 std::this_thread::sleep_for(std::chrono::seconds(1));
-            if (!g_shutdown) g_robot.get_robot_state();
+            if (!g_shutdown) g_robot.check_motion();
         }
     });
     keepalive.detach();
