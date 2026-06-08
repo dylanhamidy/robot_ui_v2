@@ -249,6 +249,23 @@ def _coerce_step_floats(step: dict) -> dict:
         if "with_laser" in step:
             step["with_laser"] = bool(step["with_laser"])
         return step
+    if step.get("type") == "FreeForm":
+        if "blend_radius" in step: step["blend_radius"] = float(step["blend_radius"])
+        if "laser_delay" in step: step["laser_delay"] = float(step["laser_delay"])
+        if "with_laser" in step: step["with_laser"] = bool(step["with_laser"])
+        if "sub_steps" in step:
+            for ss in step["sub_steps"]:
+                sstype = ss.get("type")
+                if sstype == "MoveL" and ss.get("pos") is not None:
+                    ss["pos"] = [float(v) for v in ss["pos"]]
+                elif sstype == "MoveC":
+                    if ss.get("pos_via") is not None: ss["pos_via"] = [float(v) for v in ss["pos_via"]]
+                    if ss.get("pos_end") is not None: ss["pos_end"] = [float(v) for v in ss["pos_end"]]
+                    ss.pop("pos_start", None)
+                for k in ("vel", "acc"):
+                    if k in ss: ss[k] = [float(x) for x in ss[k]] if isinstance(ss[k], list) else float(ss[k])
+                if "time" in ss: ss["time"] = float(ss["time"])
+        return step
     if "pos" in step:
         step["pos"] = [float(v) for v in step["pos"]]
     for key in ("vel", "acc"):

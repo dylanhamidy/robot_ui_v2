@@ -206,10 +206,10 @@ function app() {
                 if (subType === 'MoveL') {
                   this.captureFreeFormPos(stepIdx, subIdx, 'pos');
                 } else {
-                  const fieldMap = { a: 'pos_start', b: 'pos_via', c: 'pos_end' };
-                  const nextMap  = { a: 'b', b: 'c', c: 'c' };
-                  const field = fieldMap[this.freefromMoveCTarget] || 'pos_start';
-                  const next  = nextMap[this.freefromMoveCTarget]  || 'c';
+                  const fieldMap = { a: 'pos_via', b: 'pos_end' };
+                  const nextMap  = { a: 'b', b: 'b' };
+                  const field = fieldMap[this.freefromMoveCTarget] || 'pos_via';
+                  const next  = nextMap[this.freefromMoveCTarget]  || 'b';
                   this.captureFreeFormPos(stepIdx, subIdx, field).then(() => {
                     this.freefromMoveCTarget = next;
                   });
@@ -395,7 +395,11 @@ function app() {
             laser_delay: s.laser_delay ?? 0,
             blend_radius: s.blend_radius ?? 50,
             enabled: s.enabled !== false,
-            sub_steps: (s.sub_steps || []).map(ss => ({ ...ss })),
+            sub_steps: (s.sub_steps || []).map(ss => {
+              const copy = { ...ss };
+              if (copy.type === "MoveC") delete copy.pos_start;
+              return copy;
+            }),
           };
         }
         return {
@@ -749,7 +753,6 @@ function app() {
                 const a = Number(ss.acc) || 30;
                 return {
                   type: "MoveC",
-                  pos_start: ss.pos_start ? ss.pos_start.map(Number) : null,
                   pos_via: ss.pos_via ? ss.pos_via.map(Number) : null,
                   pos_end: ss.pos_end ? ss.pos_end.map(Number) : null,
                   vel: [v, v], acc: [a, a],
@@ -1143,7 +1146,7 @@ function app() {
       if (type === "MoveL") {
         step.sub_steps.push({ type: "MoveL", pos: null, vel: 30, acc: 30, time: 0, with_laser: false });
       } else if (type === "MoveC") {
-        step.sub_steps.push({ type: "MoveC", pos_start: null, pos_via: null, pos_end: null, vel: 30, acc: 30, time: 0, angle2: 0, with_laser: false });
+        step.sub_steps.push({ type: "MoveC", pos_via: null, pos_end: null, vel: 30, acc: 30, time: 0, angle2: 0, with_laser: false });
       }
       this.modalSteps[stepIdx] = { ...step };
       this.markDirty();
