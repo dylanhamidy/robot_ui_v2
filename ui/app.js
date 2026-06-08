@@ -83,6 +83,11 @@ function app() {
     freefromCaptureTarget: null,
     freefromMoveCTarget: 'a',
 
+    // Pending FreeForm builder (hand guide + jog)
+    pendingFreeFormSubSteps: [],
+    pendingFreeFormCapture: null,   // {idx, field}
+    pendingFreeFormCapturing: null, // 'idx-field' while loading
+
     // Jog
     jogReference: 0,
     jogVelocity: 20,
@@ -220,6 +225,8 @@ function app() {
                     this.freefromMoveCTarget = next;
                   });
                 }
+              } else if (this.captureType === 'FreeForm' && this.pendingFreeFormCapture !== null) {
+                this.recordPendingFreeFormPoint();
               } else {
                 this.recordPoint();
               }
@@ -1010,6 +1017,9 @@ function app() {
       this.circleCaptureTarget = 'a';
       this.freefromCaptureTarget = null;
       this.freefromMoveCTarget = 'a';
+      this.pendingFreeFormSubSteps = [];
+      this.pendingFreeFormCapture = null;
+      this.pendingFreeFormCapturing = null;
     },
 
     async recordPendingPoint() {
@@ -1074,6 +1084,78 @@ function app() {
       });
       this.pendingCirclePos = { pos_start: null, pos_via: null, pos_end: null };
       this.circleCaptureTarget = 'a';
+      this.markDirty();
+      this.$nextTick(() => {
+        const last = this.$refs.stepsContainer?.lastElementChild;
+        if (last) last.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      });
+    },
+
+    addPendingFreeFormSubStep(type) {
+      if (type === 'MoveL') {
+        this.pendingFreeFormSubSteps.push({ type: 'MoveL', pos: null });
+      } else if (type === 'MoveC') {
+        this.pendingFreeFormSubSteps.push({ type: 'MoveC', pos_via: null, pos_end: null });
+      }
+      this.pendingFreeFormSubSteps = [...this.pendingFreeFormSubSteps];
+    },
+
+    removePendingFreeFormSubStep(idx) {
+      if (this.pendingFreeFormCapture?.idx === idx) this.pendingFreeFormCapture = null;
+      this.pendingFreeFormSubSteps.splice(idx, 1);
+      this.pendingFreeFormSubSteps = [...this.pendingFreeFormSubSteps];
+    },
+
+    armPendingFreeFormCapture(idx, field) {
+      this.pendingFreeFormCapture = { idx, field };
+    },
+
+    isPendingFreeFormReady() {
+      return this.pendingFreeFormSubSteps.length >= 1 &&
+             this.pendingFreeFormSubSteps.every(ss =>
+               ss.type === 'MoveL' ? ss.pos !== null
+                                   : ss.pos_via !== null && ss.pos_end !== null
+             );
+    },
+
+    async recordPendingFreeFormPoint() {
+      if (this.pendingFreeFormCapture === null) return;
+      const { idx, field } = this.pendingFreeFormCapture;
+      this.pendingFreeFormCapturing = `${idx}-${field}`;
+      try {
+        const r = await fetch("/api/robot/capture_pose", { method: "POST" });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          this.termLines.push({ text: `[ERROR] Capture failed: ${err.detail || r.status}`, type: "sentinel-error" });
+          return;
+        }
+        const { pos } = await r.json();
+        const ss = this.pendingFreeFormSubSteps[idx];
+        if (!ss) return;
+        ss[field] = pos;
+        this.pendingFreeFormSubSteps = [...this.pendingFreeFormSubSteps];
+        // Auto-advance MoveC: after pos_via capture, move to pos_end
+        if (field === 'pos_via') this.pendingFreeFormCapture = { idx, field: 'pos_end' };
+        else this.pendingFreeFormCapture = null;
+      } finally {
+        this.pendingFreeFormCapturing = null;
+      }
+    },
+
+    addPendingFreeFormStep() {
+      if (!this.isPendingFreeFormReady()) return;
+      this.modalSteps.push({
+        type: 'FreeForm',
+        sub_steps: this.pendingFreeFormSubSteps.map(ss => {
+          if (ss.type === 'MoveL') return { type: 'MoveL', pos: ss.pos, vel: [30, 30], acc: [30, 30], time: 0, blend_radius: 50, with_laser: false };
+          return { type: 'MoveC', pos_via: ss.pos_via, pos_end: ss.pos_end, vel: [30, 30], acc: [30, 30], time: 0, angle2: 0, blend_radius: 50, with_laser: false };
+        }),
+        vel: [30, 30], acc: [30, 30], blend_radius: 50,
+        with_laser: false, laser_delay: 0, enabled: true,
+      });
+      this.pendingFreeFormSubSteps = [];
+      this.pendingFreeFormCapture = null;
+      this.pendingFreeFormCapturing = null;
       this.markDirty();
       this.$nextTick(() => {
         const last = this.$refs.stepsContainer?.lastElementChild;
