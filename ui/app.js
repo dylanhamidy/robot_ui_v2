@@ -235,6 +235,8 @@ function app() {
             this.ttEmgState = isNaN(val) ? null : val;
           } else if (l.includes("[EMG_CLEAR]")) {
             this.ttEmgState = 1;
+            this.pollStatus();
+            this.pollTurntableStatus();
           } else if (l.includes("[EMERGENCY STOP]")) {
             this.running = false;
             this.activePlan = null;

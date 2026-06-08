@@ -608,7 +608,9 @@ async def _run_plan_task(plan_name: str, plan_path: Path):
         use_single_pass = not plan_loops
         should_loop = False  # daemon loops internally when loop=True
 
-        with_tt = [s.get("with_turntable", False) for s in active_steps]
+        with_tt    = [s.get("with_turntable", False) for s in active_steps]
+        with_laser = [s.get("with_laser", False)    for s in active_steps]
+        laser_delays = [float(s.get("laser_delay", 0.0)) for s in active_steps]
 
         async def tt_step_callback(text):
             if "[STEP_START]" not in text:
@@ -628,6 +630,14 @@ async def _run_plan_task(plan_name: str, plan_path: Path):
                     _turntable.write(f"SPEED:{int(tt_parallel['speed_us'])}\n".encode())
                 else:
                     _turntable.write(b"DISABLE\n")
+                if idx < len(with_laser):
+                    if with_laser[idx]:
+                        delay = laser_delays[idx]
+                        if delay > 0:
+                            await asyncio.sleep(delay)
+                        _turntable.write(b"LAS:ENA\n")
+                    else:
+                        _turntable.write(b"LAS:DIS\n")
             except Exception as e:
                 await _broadcast(f"[WARN] Turntable error: {e}\n")
     else:
@@ -698,10 +708,11 @@ async def _run_plan_task(plan_name: str, plan_path: Path):
         if _stop_requested or not should_loop:
             break
 
-    # Parallel mode: ensure turntable off after stop
+    # Parallel mode: ensure turntable + laser off after stop
     if is_parallel and _turntable and _turntable.is_open:
         try:
             _turntable.write(b"DISABLE\n")
+            _turntable.write(b"LAS:DIS\n")
         except Exception:
             pass
 
