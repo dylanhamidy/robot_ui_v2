@@ -4,9 +4,9 @@
 | ---------------------------------- | -------------------------------- |
 | ![Light mode](docs/main_light.png) | ![Dark mode](docs/main_dark.png) |
 
-Web UI for Doosan A0912 robot arm. Load plan, connect, run. Hand teaching supported.
+Web UI for Doosan A0912 robot arm. Load plan, connect, run. Hand teaching, jog, turntable, and laser welding supported.
 
-No ROS2. Direct DRFL C++ API. Works on Ubuntu 18.04 / 20.04 / 22.04.
+No ROS2. Direct DRFL C++ API. Works on Ubuntu 18.04 / 20.04 / 22.04 / 24.04.
 
 ## Prerequisites
 
@@ -51,6 +51,14 @@ Open `http://localhost:8000`. Internet needed for CDN scripts.
 2. Move arm → Record → point appears in step list
 3. Steps draggable to reorder
 4. MoveJ ↔ MoveL switch resets position values
+
+## Jog
+
+Move the arm one axis at a time from the Jog tab. Joint and Cartesian reference frames supported. Use Capture Pose to snapshot the current TCP position into a plan step's geometry fields (pos_a, pos_start, pos_via, etc.).
+
+## Turntable and laser
+
+Arduino-based turntable connects over USB serial (auto-detected). Per-step control: enable turntable, fire laser, or both simultaneously. Parallel mode spins the turntable continuously while the robot runs all steps. Sequential mode interleaves Turntable and Laser steps between robot moves. EMG button on the Arduino halts all motion immediately and shows a blocking overlay until released.
 
 ## Architecture
 

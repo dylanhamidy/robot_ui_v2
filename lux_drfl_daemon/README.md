@@ -73,6 +73,10 @@ Output → daemon **stdout** (broadcast to WebSocket by server.py)
 | `enable_hand_guide` | — | `ROBOT_MODE_MANUAL` + `task_compliance_ctrl` |
 | `disable_hand_guide` | — | `release_compliance_ctrl` + `ROBOT_MODE_AUTONOMOUS` |
 | `set_param` | `key`, `value` | update `current_type`/`default_vel`/`default_acc`/`default_time`/`plan_name` |
+| `capture_pose` | — | snapshot current TCP pose → emits `[POSE] [x,y,z,rx,ry,rz]` |
+| `enable_jog` | — | `ROBOT_MODE_MANUAL`, no compliance ctrl |
+| `disable_jog` | — | `ROBOT_MODE_AUTONOMOUS` |
+| `jog` | `axis` (0-11), `reference`, `velocity` | single jog tick on given axis |
 | `close` | — | graceful shutdown |
 
 ### Sentinels
@@ -84,6 +88,10 @@ Output → daemon **stdout** (broadcast to WebSocket by server.py)
 | `[STEP_START] N` | step N about to execute |
 | `[DONE] complete` | plan finished normally |
 | `[DONE] cancelled` | stopped by `stop` command |
+| `[POSE] [x,y,z,rx,ry,rz]` | TCP pose snapshot from `capture_pose` |
+| `[JOG_ENABLED]` | jog mode active |
+| `[JOG_DISABLED]` | jog mode inactive |
+| `[BTN_RECORD]` | flange button (bt[1]) rising edge during hand guide |
 | `[ERROR] <msg>` | error (daemon may exit) |
 | `[INFO] <msg>` | informational |
 
