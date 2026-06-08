@@ -1119,10 +1119,22 @@ async def ws_terminal(ws: WebSocket):
     if _disconnect_task and not _disconnect_task.done():
         _disconnect_task.cancel()
         _disconnect_task = None
+    async def _ping_task():
+        while True:
+            await asyncio.sleep(30)
+            try:
+                await ws.send_text("__ping__")
+            except Exception:
+                break
+
+    ping = asyncio.create_task(_ping_task())
     try:
         while True:
             await ws.receive_text()
     except WebSocketDisconnect:
+        pass
+    finally:
+        ping.cancel()
         if ws in _ws_clients:
             _ws_clients.remove(ws)
         # Start watchdog only when the last client drops

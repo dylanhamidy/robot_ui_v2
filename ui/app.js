@@ -134,7 +134,13 @@ function app() {
         return;
       const proto = location.protocol === "https:" ? "wss" : "ws";
       this.ws = new WebSocket(`${proto}://${location.host}/ws/terminal`);
+      this.ws.onopen = () => {
+        this._wsPingInterval = setInterval(() => {
+          if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send("__ping__");
+        }, 30000);
+      };
       this.ws.onmessage = (e) => {
+        if (e.data === "__ping__") return;
         const lines = e.data.split("\n");
         for (const l of lines) {
           if (l === "") continue;
@@ -249,6 +255,7 @@ function app() {
         });
       };
       this.ws.onclose = () => {
+        clearInterval(this._wsPingInterval);
         this.ws = null;
         setTimeout(() => this.connectWS(), 2000);
       };
