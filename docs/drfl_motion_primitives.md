@@ -112,6 +112,30 @@ bool movej(
 - `fBlendingRadius > 0` enables continuous-path blending into the next move (no stop at target).
 - Joint-space: no Cartesian path guarantee, no singularity issues.
 
+**Caution:**
+- When the following motion blends with `BLENDING_SPEED_TYPE_DUPLICATE` and `fBlendingRadius > 0`, the preceding motion can terminate **after** the following motion finishes if the preceding motion's remaining time (based on remaining distance, velocity, and acceleration) is greater than the following motion's total time.
+
+**Examples:**
+```cpp
+// CASE 1 — velocity/acceleration-based
+float q0[6] = { 0, 0, 90, 0, 90, 0 };
+drfl.movej(q0, 10, 20);
+// Moves to q0 at 10 deg/s, 20 deg/s²
+
+// CASE 2 — time-based
+float q0r[6] = { 0, 0, 90, 0, 90, 0 };
+drfl.movej(q0r, 0, 0, 5);
+// Moves to q0r in exactly 5 s (vel/acc ignored)
+
+// CASE 3 — blending with DUPLICATE
+float q0b[6] = { 0, 0, 90, 0, 90, 0 };
+float q1b[6] = { 90, 0, 90, 0, 90, 0 };
+drfl.movej(q0b, 10, 20, 0, MOVE_MODE_ABSOLUTE, 50);
+// Start blending into next move when 50 mm from q0b
+drfl.movej(q1b, 10, 20, 0, MOVE_MODE_ABSOLUTE, 0, BLENDING_SPEED_TYPE_DUPLICATE);
+// Blends seamlessly from preceding move into q1b
+```
+
 ---
 
 ### `amovej` — Async Joint Space Move
@@ -158,6 +182,39 @@ bool movel(
 - `fTargetVel[0]` controls TCP speed along the line; `[1]` controls rotational speed.
 - Singularities possible near certain configurations — prefer `movej` for large joint-space moves.
 - `DR_MV_APP_WELD` enables synchronization with Doosan welding I/O during motion.
+- If only `fTargetVel[0]` is set (e.g., `{30, 0}`), linear velocity is applied as given; angular velocity is determined proportionally. Same for `fTargetAcc`.
+- `fTargetTime > 0` overrides vel/acc entirely.
+
+**Caution:**
+- When the following motion blends with `BLENDING_SPEED_TYPE_DUPLICATE` and `fBlendingRadius > 0`, the preceding motion can terminate **after** the following motion finishes if remaining motion time exceeds the following motion's total time.
+
+**Examples:**
+```cpp
+// CASE 1 — velocity/acceleration-based
+float x1[6]   = { 559, 434.5, 651.5, 0, 180, 0 };
+float tvel[2] = { 50, 50 };
+float tacc[2] = { 100, 100 };
+drfl.movel(x1, tvel, tacc);
+// Moves to x1 at 50 mm/s, 100 mm/s²
+
+// CASE 2 — time-based
+float x1r[6] = { 559, 434.5, 651.5, 0, 180, 0 };
+drfl.movel(x1r, 0, 0, 5);
+// Moves to x1r in exactly 5 s
+
+// CASE 3 — relative move in tool frame
+float x1t[6] = { 559, 434.5, 651.5, 0, 180, 0 };
+drfl.movel(x1t, {50,50}, {100,100}, 0, MOVE_MODE_RELATIVE, MOVE_REFERENCE_TOOL);
+// Moves x1t offset from current position in tool coordinates
+
+// CASE 4 — blending into next movel
+float x1b[6] = { 559, 434.5, 651.5, 0, 180, 0 };
+float x2b[6] = { 559, 434.5, 251.5, 0, 180, 0 };
+float tvelb[2] = { 50, 50 };
+float taccb[2] = { 100, 100 };
+drfl.movel(x1b, tvelb, taccb, 0, MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, 100);
+// Begin blending 100 mm before x1b; chain next movel
+```
 
 ---
 
@@ -208,6 +265,39 @@ bool movec(
 - `fTargetAngle2 = 360` → full circle (robot continues past end point back to start).
 - `fTargetPos[0]` (via) and `fTargetPos[1]` (end) must not be collinear with the start position — three collinear points cannot define a circle.
 - **Inside `FreeForm`/`moveb` blend segments:** the start is implicit (previous segment's end); only `pos_via` and `pos_end` are provided. See `moveb` below.
+- If only `fTargetVel[0]` is set (e.g., `{30, 0}`), linear velocity applies; angular velocity is determined proportionally. Same for `fTargetAcc`.
+- `fTargetTime > 0` overrides vel/acc entirely.
+- `MOVE_MODE_RELATIVE`: `fTargetPos[0]` is relative from the starting point; `fTargetPos[1]` is relative from `fTargetPos[0]`.
+- `fTargetAngle1 > 0, fTargetAngle2 == 0`: total rotated angle along circular path = `fTargetAngle1`.
+- `fTargetAngle1 > 2, fTargetAngle2 > 2`: `fTargetAngle1` = constant-velocity angle, `fTargetAngle2` = accel/decel angle on each end. Total arc = `fTargetAngle1 + 2 × fTargetAngle2`.
+
+**Caution:**
+- When the following motion blends with `BLENDING_SPEED_TYPE_DUPLICATE` and `fBlendingRadius > 0`, the preceding motion can terminate **after** the following motion finishes if remaining motion time exceeds the following motion's total time.
+
+**Examples:**
+```cpp
+// CASE 1 — arc via x1[0] to x1[1]
+float x1[2][6] = { {559,434.5,651.5,0,180,0}, {559,434.5,251.5,0,180,0} };
+float tvel[2]  = { 50, 50 };
+float tacc[2]  = { 100, 100 };
+drfl.movec(x1, tvel, tacc);
+// Arc from current pos through x1[0] (via) to x1[1] (end)
+
+// CASE 2 — time-based arc
+float x1r[2][6] = { {559,434.5,651.5,0,180,0}, {559,434.5,251.5,0,180,0} };
+drfl.movec(x1r, 0, 0, 5);
+// Same arc in exactly 5 s
+
+// CASE 3 — two chained arc segments with blending
+float x1b[2][6] = { {559,434.5,651.5,0,180,0}, {559,434.5,251.5,0,180,0} };
+float x2b[2][6] = { {559,234.5,651.5,0,180,0}, {559,234.5,451.5,0,180,0} };
+float tvelb[2] = { 50, 50 };
+float taccb[2] = { 100, 100 };
+drfl.movec(x1b, tvelb, taccb, 0, MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, 0, 0, 50);
+// First arc with 50 mm blend radius into next
+drfl.movec(x2b, tvelb, taccb, 0, MOVE_MODE_ABSOLUTE, MOVE_REFERENCE_BASE, 0, 0, 0, BLENDING_SPEED_TYPE_DUPLICATE);
+// Second arc, seamlessly blended from first
+```
 
 ---
 
@@ -267,8 +357,46 @@ struct MOVE_POSB {
 - Set `_fBlendRad = 0` on the last segment — no blending needed after the final point.
 - Velocity/acceleration apply uniformly to the whole compound path; per-segment speed not supported.
 - `MAX_MOVEB_POINT = 50`. Exceeding this causes an error.
+- If only `fTargetVel[0]` is set (e.g., `{30, 0}`), linear velocity applies; angular velocity is determined proportionally. Same for `fTargetAcc`.
+- `fTargetTime > 0` overrides vel/acc for the entire compound path.
+- `MOVE_MODE_RELATIVE`: each `MOVE_POSB` pos is defined relative to the preceding pos in the array.
 
 **`FreeForm` plan step maps directly to `moveb`:** each `MoveL` sub-step → linear segment, each `MoveC` sub-step → circular segment with only `pos_via`+`pos_end` (no `pos_start` — it is implicit).
+
+**Cautions:**
+- `_fBlendRad = 0` on any non-final segment → user input error (blend radius required between segments).
+- Contiguous Line–Line segments with the **same direction** → user input error (duplicate direction).
+- Blend condition causing rapid direction change → user input error (prevents sudden acceleration).
+- Does **not** support online blending with preceding or following motions outside the `moveb` call.
+
+**Example:**
+```cpp
+// LINE → CIRCLE → LINE → LINE compound path
+MOVE_POSB xb[4];
+memset(xb, 0x00, sizeof(xb));
+float tvel[2] = { 50, 50 };
+float tacc[2] = { 100, 100 };
+
+xb[0]._iBlendType = 0;  xb[0]._fBlendRad = 50;  // line segment
+xb[0]._fTargetPos[0] = 559; xb[0]._fTargetPos[1] = 234.5; xb[0]._fTargetPos[2] = 651.5;
+xb[0]._fTargetPos[3] = 0;   xb[0]._fTargetPos[4] = 180;   xb[0]._fTargetPos[5] = 0;
+
+xb[1]._iBlendType = 1;  xb[1]._fBlendRad = 50;  // circle segment (via=[0], end=[1])
+xb[1]._fTargetPos[0] = 559; xb[1]._fTargetPos[1] = 234.5; xb[1]._fTargetPos[2] = 451.5;
+xb[1]._fTargetPos[3] = 0;   xb[1]._fTargetPos[4] = 180;   xb[1]._fTargetPos[5] = 0;
+
+xb[2]._iBlendType = 0;  xb[2]._fBlendRad = 50;  // line segment
+xb[2]._fTargetPos[0] = 559; xb[2]._fTargetPos[1] = 434.5; xb[2]._fTargetPos[2] = 451.5;
+xb[2]._fTargetPos[3] = 0;   xb[2]._fTargetPos[4] = 180;   xb[2]._fTargetPos[5] = 0;
+
+xb[3]._iBlendType = 0;  xb[3]._fBlendRad = 0;   // last segment — no blend
+xb[3]._fTargetPos[0] = 559; xb[3]._fTargetPos[1] = 234.5; xb[3]._fTargetPos[2] = 251.5;
+xb[3]._fTargetPos[3] = 0;   xb[3]._fTargetPos[4] = 180;   xb[3]._fTargetPos[5] = 0;
+
+drfl.moveb(xb, 4, tvel, tacc);
+// Executes LINE–CIRCLE–LINE–LINE at 50 mm/s, 100 mm/s²
+// Blending at 50 mm radius between each segment
+```
 
 ---
 

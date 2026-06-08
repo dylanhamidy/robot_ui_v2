@@ -394,6 +394,7 @@ function app() {
             with_laser: s.with_laser || false,
             laser_delay: s.laser_delay ?? 0,
             blend_radius: s.blend_radius ?? 50,
+            use_global_blend: s.use_global_blend !== false,
             enabled: s.enabled !== false,
             sub_steps: (s.sub_steps || []).map(ss => {
               const copy = { ...ss };
@@ -619,7 +620,7 @@ function app() {
         clearTt(); clearWeld(); clearCircle();
         delete step.pos; delete step.delay; delete step.with_turntable;
         step.sub_steps = [];
-        step.with_laser = false; step.laser_delay = 0; step.blend_radius = 50;
+        step.with_laser = false; step.laser_delay = 0; step.blend_radius = 50; step.use_global_blend = true;
       } else {
         clearTt(); clearWeld(); clearCircle(); clearFreeForm();
         step.pos = [0, 0, 0, 0, 0, 0];
@@ -730,13 +731,18 @@ function app() {
           };
         }
         if (s.type === "FreeForm") {
+          const useGlobal = s.use_global_blend !== false;
+          const globalBlend = Math.max(0.5, Number(s.blend_radius) || 50);
           return {
             type: "FreeForm",
             with_laser: s.with_laser || false,
             laser_delay: Number(s.laser_delay) || 0,
-            blend_radius: Number(s.blend_radius) ?? 50,
+            blend_radius: globalBlend,
+            use_global_blend: useGlobal,
             enabled: s.enabled !== false,
-            sub_steps: (s.sub_steps || []).map(ss => {
+            sub_steps: (s.sub_steps || []).map((ss, idx, arr) => {
+              const isLast = idx === arr.length - 1;
+              const blendRad = isLast ? 0 : Math.max(0.5, useGlobal ? globalBlend : (Number(ss.blend_radius) || 5));
               if (ss.type === "MoveL") {
                 const v = Number(ss.vel) || 30;
                 const a = Number(ss.acc) || 30;
@@ -745,6 +751,7 @@ function app() {
                   pos: ss.pos ? ss.pos.map(Number) : null,
                   vel: [v, v], acc: [a, a],
                   time: Number(ss.time) || 0,
+                  blend_radius: blendRad,
                   with_laser: ss.with_laser || false,
                 };
               }
@@ -758,6 +765,7 @@ function app() {
                   vel: [v, v], acc: [a, a],
                   time: Number(ss.time) || 0,
                   angle2: Number(ss.angle2) || 0,
+                  blend_radius: blendRad,
                   with_laser: ss.with_laser || false,
                 };
               }
@@ -1144,9 +1152,9 @@ function app() {
       const step = this.modalSteps[stepIdx];
       if (!step) return;
       if (type === "MoveL") {
-        step.sub_steps.push({ type: "MoveL", pos: null, vel: 30, acc: 30, time: 0, with_laser: false });
+        step.sub_steps.push({ type: "MoveL", pos: null, vel: 30, acc: 30, time: 0, blend_radius: 5, with_laser: false });
       } else if (type === "MoveC") {
-        step.sub_steps.push({ type: "MoveC", pos_via: null, pos_end: null, vel: 30, acc: 30, time: 0, angle2: 0, with_laser: false });
+        step.sub_steps.push({ type: "MoveC", pos_via: null, pos_end: null, vel: 30, acc: 30, time: 0, angle2: 0, blend_radius: 5, with_laser: false });
       }
       this.modalSteps[stepIdx] = { ...step };
       this.markDirty();

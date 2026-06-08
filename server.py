@@ -265,6 +265,7 @@ def _coerce_step_floats(step: dict) -> dict:
                 for k in ("vel", "acc"):
                     if k in ss: ss[k] = [float(x) for x in ss[k]] if isinstance(ss[k], list) else float(ss[k])
                 if "time" in ss: ss["time"] = float(ss["time"])
+                if "blend_radius" in ss: ss["blend_radius"] = float(ss["blend_radius"])
         return step
     if "pos" in step:
         step["pos"] = [float(v) for v in step["pos"]]

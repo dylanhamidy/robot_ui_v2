@@ -358,7 +358,12 @@ static bool execStep(const json& step, int stepIdx) {
                 }
                 for (int k = 0; k < NUM_TASK; k++) posb[si]._fTargetPos[0][k] = arr[k].get<float>();
                 posb[si]._iBlendType = 0;  // line
-                posb[si]._fBlendRad  = is_last ? 0.f : blend_rad;
+                if (is_last) {
+                    posb[si]._fBlendRad = 0.f;
+                } else {
+                    float seg_blend = ss.value("blend_radius", blend_rad);
+                    posb[si]._fBlendRad = seg_blend < 0.5f ? 0.5f : seg_blend;
+                }
 
             } else if (sstype == "MoveC") {
                 if (!ss.contains("pos_via") || ss["pos_via"].is_null() ||
@@ -369,7 +374,12 @@ static bool execStep(const json& step, int stepIdx) {
                 for (int k = 0; k < NUM_TASK; k++) posb[si]._fTargetPos[0][k] = ss["pos_via"][k].get<float>();
                 for (int k = 0; k < NUM_TASK; k++) posb[si]._fTargetPos[1][k] = ss["pos_end"][k].get<float>();
                 posb[si]._iBlendType = 1;  // circle
-                posb[si]._fBlendRad  = is_last ? 0.f : blend_rad;
+                if (is_last) {
+                    posb[si]._fBlendRad = 0.f;
+                } else {
+                    float seg_blend = ss.value("blend_radius", blend_rad);
+                    posb[si]._fBlendRad = seg_blend < 0.5f ? 0.5f : seg_blend;
+                }
             } else {
                 emit("[ERROR] FreeForm sub-step " + std::to_string(si) + " unknown type: " + sstype);
                 return false;
