@@ -719,11 +719,13 @@ async def _run_plan_task(plan_name: str, plan_path: Path):
     elapsed_total = time.monotonic() - t_start
     await _broadcast(f"[STAT] Finished in {elapsed_total:.1f}s\n")
 
-    if _stop_requested:
+    if last_rc < 0:
+        result = "unknown"
+    elif _stop_requested or not plan_loops:
         result = "success"
-        _stop_requested = False
     else:
-        result = "unknown" if last_rc < 0 else "fail"
+        result = "fail"  # loop plan ended without user stop
+    _stop_requested = False
 
     _record_stat(plan_name, result)
     await _broadcast(f"[DONE] Plan '{plan_name}' finished — {result}\n")

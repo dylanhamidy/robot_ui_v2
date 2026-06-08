@@ -171,8 +171,16 @@
     .dark .bg-cyan-50   { background-color: rgba(6, 182, 212, 0.10); }
     .dark .text-cyan-700 { color: #22d3ee; }
 
-    /* Purple — MoveC step badge */
+    /* Blue — FreeForm Line badge */
+    .dark .bg-blue-100   { background-color: rgba(59, 130, 246, 0.15); }
+    .dark .text-blue-700 { color: #93c5fd; }
+
+    /* Teal active / capturing state */
+    .dark .text-teal-600 { color: #2dd4bf; }
+
+    /* Purple — MoveC step badge, FreeForm Arc badge */
     .dark .bg-purple-50    { background-color: rgba(168, 85, 247, 0.12); }
+    .dark .bg-purple-100   { background-color: rgba(168, 85, 247, 0.15); }
     .dark .text-purple-700 { color: #c084fc; }
 
     /* Toggle off-state and misc */
@@ -1134,11 +1142,11 @@
               <div class="text-[10px] font-semibold text-teal-700 uppercase tracking-widest">FreeForm — add waypoints, arm each, Record</div>
               <div class="flex gap-2">
                 <button @click="addPendingFreeFormSubStep('MoveL')"
-                        class="focus-ring flex-1 py-1.5 text-xs font-medium rounded-md border border-chrome-input bg-btn hover:bg-surface-raised text-gray-700 transition-colors duration-150">
+                        class="focus-ring flex-1 py-1.5 text-xs font-medium rounded-md border border-chrome-input bg-btn hover:bg-surface-raised text-gray-700 dark:text-gray-300 transition-colors duration-150">
                   + Line
                 </button>
                 <button @click="addPendingFreeFormSubStep('MoveC')"
-                        class="focus-ring flex-1 py-1.5 text-xs font-medium rounded-md border border-chrome-input bg-btn hover:bg-surface-raised text-gray-700 transition-colors duration-150">
+                        class="focus-ring flex-1 py-1.5 text-xs font-medium rounded-md border border-chrome-input bg-btn hover:bg-surface-raised text-gray-700 dark:text-gray-300 transition-colors duration-150">
                   + Arc
                 </button>
               </div>
@@ -1156,10 +1164,10 @@
                     <div x-show="ss.type === 'MoveL'" class="flex items-center gap-2">
                       <button @click="armPendingFreeFormCapture(si, 'pos')"
                               class="focus-ring px-2 py-1 text-[10px] font-semibold rounded border transition-colors duration-150 flex-shrink-0"
-                              :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 border-chrome-input'">
+                              :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 dark:text-gray-300 border-chrome-input'">
                         Arm
                       </button>
-                      <span class="font-mono text-[10px]" :class="ss.pos ? 'text-gray-700' : 'text-dim'"
+                      <span class="font-mono text-[10px]" :class="ss.pos ? 'text-gray-700 dark:text-gray-300' : 'text-dim'"
                             x-text="ss.pos ? ss.pos.slice(0,3).map(v=>parseFloat(v).toFixed(1)).join(', ') + ' mm' : 'not recorded'"></span>
                       <span x-show="pendingFreeFormCapturing === si + '-pos'" class="text-[10px] text-teal-600 animate-pulse">capturing…</span>
                     </div>
@@ -1167,20 +1175,20 @@
                       <div class="flex items-center gap-2">
                         <button @click="armPendingFreeFormCapture(si, 'pos_via')"
                                 class="focus-ring px-2 py-1 text-[10px] font-semibold rounded border transition-colors duration-150 flex-shrink-0"
-                                :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos_via' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 border-chrome-input'">
+                                :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos_via' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 dark:text-gray-300 border-chrome-input'">
                           Via
                         </button>
-                        <span class="font-mono text-[10px]" :class="ss.pos_via ? 'text-gray-700' : 'text-dim'"
+                        <span class="font-mono text-[10px]" :class="ss.pos_via ? 'text-gray-700 dark:text-gray-300' : 'text-dim'"
                               x-text="ss.pos_via ? ss.pos_via.slice(0,3).map(v=>parseFloat(v).toFixed(1)).join(', ') + ' mm' : 'not recorded'"></span>
                         <span x-show="pendingFreeFormCapturing === si + '-pos_via'" class="text-[10px] text-teal-600 animate-pulse">capturing…</span>
                       </div>
                       <div class="flex items-center gap-2">
                         <button @click="armPendingFreeFormCapture(si, 'pos_end')"
                                 class="focus-ring px-2 py-1 text-[10px] font-semibold rounded border transition-colors duration-150 flex-shrink-0"
-                                :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos_end' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 border-chrome-input'">
+                                :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos_end' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 dark:text-gray-300 border-chrome-input'">
                           End
                         </button>
-                        <span class="font-mono text-[10px]" :class="ss.pos_end ? 'text-gray-700' : 'text-dim'"
+                        <span class="font-mono text-[10px]" :class="ss.pos_end ? 'text-gray-700 dark:text-gray-300' : 'text-dim'"
                               x-text="ss.pos_end ? ss.pos_end.slice(0,3).map(v=>parseFloat(v).toFixed(1)).join(', ') + ' mm' : 'not recorded'"></span>
                         <span x-show="pendingFreeFormCapturing === si + '-pos_end'" class="text-[10px] text-teal-600 animate-pulse">capturing…</span>
                       </div>
@@ -1440,11 +1448,11 @@
               <div class="text-[10px] font-semibold text-teal-700 uppercase tracking-widest">FreeForm — add waypoints, arm each, Record</div>
               <div class="flex gap-2">
                 <button @click="addPendingFreeFormSubStep('MoveL')"
-                        class="focus-ring flex-1 py-1.5 text-xs font-medium rounded-md border border-chrome-input bg-btn hover:bg-surface-raised text-gray-700 transition-colors duration-150">
+                        class="focus-ring flex-1 py-1.5 text-xs font-medium rounded-md border border-chrome-input bg-btn hover:bg-surface-raised text-gray-700 dark:text-gray-300 transition-colors duration-150">
                   + Line
                 </button>
                 <button @click="addPendingFreeFormSubStep('MoveC')"
-                        class="focus-ring flex-1 py-1.5 text-xs font-medium rounded-md border border-chrome-input bg-btn hover:bg-surface-raised text-gray-700 transition-colors duration-150">
+                        class="focus-ring flex-1 py-1.5 text-xs font-medium rounded-md border border-chrome-input bg-btn hover:bg-surface-raised text-gray-700 dark:text-gray-300 transition-colors duration-150">
                   + Arc
                 </button>
               </div>
@@ -1462,10 +1470,10 @@
                     <div x-show="ss.type === 'MoveL'" class="flex items-center gap-2">
                       <button @click="armPendingFreeFormCapture(si, 'pos')"
                               class="focus-ring px-2 py-1 text-[10px] font-semibold rounded border transition-colors duration-150 flex-shrink-0"
-                              :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 border-chrome-input'">
+                              :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 dark:text-gray-300 border-chrome-input'">
                         Arm
                       </button>
-                      <span class="font-mono text-[10px]" :class="ss.pos ? 'text-gray-700' : 'text-dim'"
+                      <span class="font-mono text-[10px]" :class="ss.pos ? 'text-gray-700 dark:text-gray-300' : 'text-dim'"
                             x-text="ss.pos ? ss.pos.slice(0,3).map(v=>parseFloat(v).toFixed(1)).join(', ') + ' mm' : 'not recorded'"></span>
                       <span x-show="pendingFreeFormCapturing === si + '-pos'" class="text-[10px] text-teal-600 animate-pulse">capturing…</span>
                     </div>
@@ -1473,20 +1481,20 @@
                       <div class="flex items-center gap-2">
                         <button @click="armPendingFreeFormCapture(si, 'pos_via')"
                                 class="focus-ring px-2 py-1 text-[10px] font-semibold rounded border transition-colors duration-150 flex-shrink-0"
-                                :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos_via' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 border-chrome-input'">
+                                :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos_via' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 dark:text-gray-300 border-chrome-input'">
                           Via
                         </button>
-                        <span class="font-mono text-[10px]" :class="ss.pos_via ? 'text-gray-700' : 'text-dim'"
+                        <span class="font-mono text-[10px]" :class="ss.pos_via ? 'text-gray-700 dark:text-gray-300' : 'text-dim'"
                               x-text="ss.pos_via ? ss.pos_via.slice(0,3).map(v=>parseFloat(v).toFixed(1)).join(', ') + ' mm' : 'not recorded'"></span>
                         <span x-show="pendingFreeFormCapturing === si + '-pos_via'" class="text-[10px] text-teal-600 animate-pulse">capturing…</span>
                       </div>
                       <div class="flex items-center gap-2">
                         <button @click="armPendingFreeFormCapture(si, 'pos_end')"
                                 class="focus-ring px-2 py-1 text-[10px] font-semibold rounded border transition-colors duration-150 flex-shrink-0"
-                                :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos_end' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 border-chrome-input'">
+                                :class="pendingFreeFormCapture?.idx === si && pendingFreeFormCapture?.field === 'pos_end' ? 'bg-teal-600 text-white border-transparent' : 'bg-btn text-gray-600 dark:text-gray-300 border-chrome-input'">
                           End
                         </button>
-                        <span class="font-mono text-[10px]" :class="ss.pos_end ? 'text-gray-700' : 'text-dim'"
+                        <span class="font-mono text-[10px]" :class="ss.pos_end ? 'text-gray-700 dark:text-gray-300' : 'text-dim'"
                               x-text="ss.pos_end ? ss.pos_end.slice(0,3).map(v=>parseFloat(v).toFixed(1)).join(', ') + ' mm' : 'not recorded'"></span>
                         <span x-show="pendingFreeFormCapturing === si + '-pos_end'" class="text-[10px] text-teal-600 animate-pulse">capturing…</span>
                       </div>
